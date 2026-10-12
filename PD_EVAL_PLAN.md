@@ -1,0 +1,165 @@
+# PD: Alpamayo 2 Super as a behavioral replica probe — plan and state
+
+Working document for picking this up in a new session. Written 2026-10-12 from a session in
+`~/workspace/pd-fm`. This file is PD-internal and sits untracked in an NVIDIA checkout
+(`origin` = `github.com/NVlabs/alpamayo2`); move it with the code when the eval repo is created.
+
+## Goal
+
+Run Alpamayo 2 Super on (a) real multi-camera footage and (b) pdncc splat renders of the same
+scene at the same poses, and compare its predictions (trajectory = quantitative gate, Chain-of-Causation
+text = explanation). Same behavior => the replica is fit to drive in. Internal regression use first;
+no fine-tuning, ever. The full rationale, decisions and metric design live in
+`~/workspace/pd-neural-content-creation/ALPAMAYO_EVAL_BRAINSTORM.md` (§1 state, §3 decisions,
+§6.9 metrics, §6.10 architecture). This file does not repeat them.
+
+Division of labour: **pdncc** builds the replica and exports clip inputs (real + rendered frames,
+calibration, ego poses). **A separate eval repo** (to be created, based on this checkout) runs the
+model on the Nebius H100 cluster, writes raw outputs to S3, and scores offline. The user produces
+the renders; the eval side is what this plan covers.
+
+## What is already in place (verified 2026-10-12)
+
+- **Compute.** The Nebius Ray cluster (`ray-nebius.internal.paralleldomain.com:8265`, VPN-only)
+  has two H100 80 GB pools: a 1-GPU pool (Ray tag `{h100: 1}`, 16 vCPU, 200 GB RAM, 558 GB SSD)
+  and one 8-GPU node (`{h100x8: 1}`, `maxReplicas: 1`, usually held by pd-fm training). The user
+  can submit: a pd-fm bench job ran end to end on the 1-GPU pool. The brainstorm's §5 blocker
+  ("do we have 80 GB nodes?") is therefore resolved.
+- **Model fit.** The single-GPU batch-1 path needs ~72 GB (README, this repo) -> fits one H100.
+  The two-GPU `nav_text` CFG demo (`examples/two_gpu_nav_cfg_demo.py`) needs 2x80 GB -> only the
+  8-GPU node. Start single-GPU, no CFG.
+- **Data.** Three NVIDIA PhysicalAI-AV val-split scenes (Austria roundabout, Madrid intersection,
+  Italy tram street) were converted to MCAP with 3D cuboid tracks and dynamic replicas were built
+  ("reconstructed successfully", `~/workspace/pai_av_handover/README.md`, table "The three scenes
+  that were built" has bundle UUIDs + 10 Hz curated bundle UUIDs). Exact NVIDIA rig => zero rig gap.
+  Jannik's unmerged pdncc branch `jannik/nvidia-av-vehicles-export` went on to 60 scenes after the
+  brainstorm doc stopped being updated — ask him what exists beyond the three. Raw scene folders
+  (`~/data/pai_av_scenes`) are gone from this box; HF streaming still works.
+- **Hugging Face.** The local token (`~/.cache/huggingface/token`, account `harsandor`) returns
+  200 on both gated repos: `nvidia/Alpamayo2-Super` and `nvidia/PhysicalAI-Autonomous-Vehicles`.
+- **Licensing.** Model weights OpenMDW-1.1, code Apache-2.0 (forking is fine, keep LICENSE +
+  notices). PhysicalAI-AV-derived numbers and renders stay internal until the NVIDIA outreach
+  (brainstorm §8, "awaiting reply" as of 2026-08-25) resolves. Internal regression use is fine.
+- **Local box.** No `uv`, no `nvcc`, 4 GB laptop GPU, ~92 GB free disk. Nothing in phase 1 can run
+  locally; do NOT download the 68 GB weights here.
+
+## The model's input contract (read from source, this repo)
+
+Per instant `t0`, `load_physical_aiavdataset()` (`src/alpamayo2_super/load_physical_aiavdataset.py`,
+docstring lines 32-75 lists every key) produces one dict:
+
+| key | shape | note |
+|---|---|---|
+| `image_frames` | (7 cams, 4 frames, 3, H, W) uint8 | frames at t0-0.3/-0.2/-0.1/0 s; 1920x1080 f-theta native |
+| `camera_indices` / `camera_names` | (7,) | MUST be the canonical ring in order 0..6 (`input_profiles.validate_source_camera_ring`) |
+| `absolute_timestamps` / `relative_timestamps` | (7, 4) | per camera per frame, µs clip-relative / s from min |
+| `ego_history_xyz` / `_rot` | (1,1,16,3) / (1,1,16,3,3) | 1.6 s @ 10 Hz ending at t0, in the ego frame at t0 |
+| `ego_future_xyz` / `_rot` | (1,1,64,3) / (1,1,64,3,3) | 6.4 s GT future, **scoring only** |
+| `ego_t0`, `ego_t0_frame_idx`, `camera_tmin`, `*_tvals`, `ego_t0_xyz`, `ego_t0_inv_quat` | | bookkeeping, derived |
+| `camera_calibrations` | dict | optional, visualization overlays only |
+
+Then, unchanged from NVIDIA's path: `select_task_input(data, "trajectory")` picks cameras
+`[0,1,2,3,5,6]` (drops rear-tele) -> `helper.prepare_model_inputs` -> `model.sample_trajectories_from_data`
+(`num_traj_samples`, `diffusion_kwargs={"inference_step": N}`, `torch.cuda.manual_seed_all(seed)` first).
+
+**Verified: the GT future is NOT an inference input.** `prepare_model_inputs` forwards only history
+(`helper.py:98-102`); `sample_trajectories_from_data` builds `traj_data` from history only
+(`models/alpamayo2_super.py:268-270`); `fuse_traj_tokens` guards the future with an `if`. The future
+is required only by training and the auto-labeling text task. Keep it in the export when available
+(needed for the three-way readout), `null` otherwise.
+
+**Hard inputs the export must carry besides images:** ego pose history (not an annotation — it is
+the recorded trajectory, present in the MCAP / `egomotion.offline`; the same trajectory serves both
+arms since renders are at recorded poses), and per-camera frame timestamps (PAI-AV cameras are not
+synchronized). 10 Hz curated bundles match the model's 0.1 s frame spacing.
+
+## Corrections to the first sketch
+
+1. Do not modify NVIDIA's package. Add a sibling package `pd_alpamayo_eval` with
+   `load_pdncc_export(manifest, clip_id, t0_us)` returning the same dict; the other three calls run
+   untouched. ~300 lines. Export the full 7-camera ring; the profile selection stays NVIDIA's.
+2. Fork into a private `parallel-domain/alpamayo-eval` (name TBD by user), NVIDIA code vendored
+   under `third_party/alpamayo2/` or kept at root; do not branch inside the NVLabs clone.
+3. Identical preprocessing in both arms (brainstorm hard rule): same JPEG path, same resolution
+   (original 1920x1080 f-theta framing — the KB-fit replica renders in the original distorted model),
+   same slot mapping. Save renders as JPEG q95 like the MCAP frames, not PNG.
+4. Do not reuse `pd_fm.launch.ray`: it rewrites the command for pd-fm's Hydra CLI. Write a small
+   submitter instead (below).
+
+## Infra risks, in order
+
+1. **flash-attn builds from source.** `uv.lock` pins `flash-attn==2.8.3` from the PyPI sdist ->
+   needs `nvcc`, 30-120 min. Unknown whether the Ray worker image (`image: null` = node base env)
+   has nvcc; pd-fm avoids it everywhere. Fixes: point the lock at the prebuilt GitHub-release wheel
+   (torch 2.8 / cu12 / py3.12 / cxx11abi), or add `cuda-nvcc` via pixi. Build once; cache the venv.
+2. **68 GB weights, HF-gated.** Nebius `/tmp` is a per-POD emptyDir (lost on recycle). Download
+   once to the persistent virtiofs `/mnt/pdfm-data/` (2 TiB, mounted on both H100 pools; pd-fm
+   uses `/mnt/pdfm-data/pdfm-data-cache`) and pass the directory as `--model-id`
+   (`inference_smoke.validate_model_id` checks the layout). Then the HF token never has to ride in
+   a job env again — Ray's dashboard serves `runtime_env.env_vars` UNAUTHENTICATED, so any
+   forwarded token/key is exposed (same caveat pd-fm documents for the Nebius S3 key).
+3. **Private-repo clone from the pod.** pd-fm pods clone over SSH (`_remote.to_ssh_url`), so some
+   deploy credential exists; whether it covers a new repo is unknown. Ray `--working-dir` upload
+   (pattern: `pd-fm/scripts/submit_mirror_job.py`) sidesteps it for iteration.
+4. **Cold start.** Autoscale ~2 min + 7.5 GB image pull ~3.5 min; `RAY_JOB_START_TIMEOUT_SECONDS`
+   900 s kills a job still PENDING at ~15 min (pd-fm `docs/clusters.md`). Resubmit onto a warm node.
+5. **Results retrieval** needs a Nebius S3 key (`pd-nebius-ray`, service account in project
+   `project-e00ate7dpr00brrpem4zqa`, scope `storage.object-editor`) or the job log. The user was
+   invited to the tenant; key creation was in progress at the time of writing. No `nebius` AWS
+   profile exists yet on this box (`~/.aws/config` has only `default` = AWS SSO).
+
+## Plan
+
+**Phase 0 — cluster hello-world.** DONE (pd-fm bench on 1xH100).
+
+**Phase 1 — NVIDIA's own smoke on the cluster.** No pdncc work. Settles risks 1-4.
+1. Repo skeleton: vendored NVIDIA code, `pixi.toml` providing Python 3.12 + `uv` (+ `cuda-nvcc`
+   fallback), empty `pd_alpamayo_eval` package.
+2. Submitter (~100 lines): Ray Jobs API, `--working-dir` upload, `entrypoint_num_gpus=1`,
+   `entrypoint_resources={"h100": 1}`, HF token as job env for the first run only.
+3. Entrypoint: `uv sync --locked`; download weights to `/mnt/pdfm-data/alpamayo2-super/` if absent;
+   `python -m alpamayo2_super.inference_smoke --manifest examples/validation_samples.json
+   --sample-index 0 --save-viz ... --save-json ...` into `/mnt/pdfm-data/alpamayo-eval/smoke/`;
+   print the JSON into the job log.
+4. Record: env build time, weight load time, peak VRAM, seconds per instant, minADE on sample 0.
+
+**Phase 2 — export contract + loader + parity test.**
+- Manifest per brainstorm §6.10: `manifest.json` (rig: per camera K/distortion/size/cam_to_ego;
+  clips: instant timestamps, ego history 16x(t,xyz,R) in ego@t0, gt_future up to 64x, nav_text|null,
+  per-camera frame stems), `real/<clip>/<cam>/<stem>.jpg`, `rendered/<clip>/<cam>/<stem>.jpg`.
+- `load_pdncc_export()` -> same dict as `load_physical_aiavdataset()`.
+- **Parity test** (the one test that matters): same PAI-AV clip + t0, real frames from our MCAP
+  export vs frames streamed from HF, same seed -> trajectories should nearly coincide. Checks
+  timestamps, ego-frame convention and image handling at once.
+
+**Phase 3 — runner + scorer.**
+- Runner loops instants x {real, rendered}, fixed seeds (common random numbers), N samples; writes
+  JSON/npz per instant to `s3://pd-nebius-ray/alpamayo-eval/<run>/`. 3 scenes x ~60 instants x 2
+  arms ≈ 360 calls ≈ 1-2 h on one H100.
+- Scorer offline on CPU: ADE/FDE at 1/2/3/6.4 s (real vs render, each vs GT), CoC text diff,
+  meta-action agreement; per-scene median/p90; blind test (wrong images, same history).
+- Later: `nav_text` CFG on the 8-GPU node, companion probes, pdncc step registering the artifact.
+
+## Open asks (from the user / colleagues)
+
+- Repo name + whether to create `parallel-domain/alpamayo-eval` now or start under
+  `~/workspace/alpamayo-eval` and push later.
+- Nebius S3 key (and store it as a separate `nebius` AWS profile, never in `default`).
+- Does the cluster's git credential cover a new repo? (Ask whoever set up Nebius Ray; or stay on
+  `--working-dir`.)
+- Jannik: which replicas exist beyond the three; were they rendered at every 10 Hz pose or only
+  `max_eval_frames=150`; export path for all 7 cameras at original framing.
+- NVIDIA outreach status (gates anything customer-facing, not internal use).
+- Permission to submit the first phase-1 job (holds one H100 ~30-90 min on the first run).
+
+## Pointers
+
+- Brainstorm + decisions: `~/workspace/pd-neural-content-creation/ALPAMAYO_EVAL_BRAINSTORM.md`
+- Conversion audit / handover: `~/workspace/pai_av_handover/{README,CONVERSION_AUDIT}.md`
+- PAI-AV download CLI (own pixi env): `~/workspace/pai_av/parallel_domain_scripts/scenes.py`
+- Cluster rules: `~/workspace/pd-fm/docs/clusters.md`, launcher internals
+  `pd_fm/launch/{ray.py,_remote.py}`, lightweight submitter `scripts/submit_mirror_job.py`,
+  Nebius launcher config `configs/launcher/ray_nebius.yaml` (resources tag, `/mnt/pdfm-data`).
+- This repo: `README.md` (CLI, env, two-GPU demo), `src/alpamayo2_super/{load_physical_aiavdataset,
+  input_profiles,helper,inference_smoke}.py`, `pyproject.toml` + `uv.lock` (torch 2.8.0,
+  transformers 4.57.1, flash-attn 2.8.3 sdist, physical-ai-av 0.2.2, Python 3.12 only).
