@@ -60,3 +60,8 @@ env = { PYTHONPATH = "src:." }
 [tasks.make-video]
 cmd = "python pd_alpamayo_eval/make_video.py"
 env = { PYTHONPATH = "src:." }
+
+# Noise floor vs replica effect: `pixi run -e dev compare-runs <run A> <run B> ...`
+[tasks.compare-runs]
+cmd = "python pd_alpamayo_eval/compare_runs.py"
+env = { PYTHONPATH = "src:." }
