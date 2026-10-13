@@ -211,8 +211,26 @@ instants with 6-9 m paired ADE are all of this kind (e.g. t=+0.0 s: real stops a
 13 m, all renders run to 40 m while their text still says "slow down due to the lead vehicle").
 A symmetric seed-noise floor cannot produce a one-sided bias, so this is a real replica effect on
 the model: the lead vehicle in the renders reads as further away / less constraining. Video:
-`outputs/full_variations_27f93c3e.mp4` (make-video on the run). **Still to do: the seed-to-seed
-noise floor on the real arm (sizes the paired-ADE scale), and a meta-action text comparison.**
+`outputs/full_variations_27f93c3e.mp4` (make-video on the run).
+
+**Seed-to-seed noise floor, run `alpamayo-run-af7ff7bc` (real arm, seed 1, same export).**
+`pixi run -e dev compare-runs <run 27f93c3e> <run af7ff7bc>`, reference real@seed42, 174 instants:
+
+| column | paired ADE med / p90 | predicted-distance diff med | longer / shorter (>1 m) | ADE vs GT med | CoT sentence differs |
+|---|---|---|---|---|---|
+| real@seed1 (floor) | 0.95 / 2.27 m | -0.01 m | 32 % / 36 % | 1.13 m | 72 % |
+| rendered@seed42 | 1.14 / 5.78 m | +2.60 m | 68 % / 13 % | 1.33 m | 70 % |
+| rendered_rainy@seed42 | 1.73 / 5.93 m | +4.34 m | 75 % / 14 % | 1.64 m | 89 % |
+| rendered_snowy@seed42 | 1.34 / 6.03 m | +1.75 m | 59 % / 23 % | 1.17 m | 91 % |
+
+Reading: (1) the median paired ADE of the rendered arm (1.14 m) is only 20 % above the seed floor
+(0.95 m), i.e. on a typical instant the replica changes the trajectory about as much as the
+diffusion noise does; (2) the tail is the replica effect: p90 5.8-6.0 m vs a 2.3 m floor, 2.5x;
+(3) the predicted-distance bias is the cleanest discriminator: seeds are symmetric (32/36 %,
+-0.01 m), renders are one-sided (+1.8 to +4.3 m, 59-75 % longer); (4) the CoT sentence differs
+on 72 % of instants between two seeds of the SAME images, so sentence-level text agreement is
+sampling noise and useless as a metric; meta-actions are required. Per-scene gate candidates:
+paired-ADE p90 relative to the seed floor, and the signed distance bias (floor: ~0, symmetric).
 
 ## Plan
 
