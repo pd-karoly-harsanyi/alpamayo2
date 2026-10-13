@@ -201,8 +201,18 @@ the real arm is 0.3-0.4 m from GT ("keep distance ... moving slowly") while rend
 off (same keep-distance text but a go trajectory), and snowy sits at 0.6 m on some of the same
 instants. I.e. the model flips between a stop and a go mode; renders flip it more often. The
 sentence-level text diff overstates disagreement (85 distinct sentences, mostly paraphrases of
-keep-distance); a meta-action-level comparison is needed. **Still missing: the seed-to-seed noise
-floor on the real arm, which decides whether 1.1 m median / 5.8 m p90 is signal.**
+keep-distance); a meta-action-level comparison is needed.
+
+**Directional finding: on renders the model drives faster.** Distance covered by the predicted
+6.4 s trajectory, median over 174 instants: real 23.4 m (GT 21.2 m), rendered 24.9 m, rainy
+30.6 m, snowy 30.2 m. Per instant, rendered is longer than real by +2.6 m median (longer on 68 %
+of instants, shorter on 13 %), rainy +4.3 m (75 % / 14 %), snowy +1.8 m (59 % / 23 %). The
+instants with 6-9 m paired ADE are all of this kind (e.g. t=+0.0 s: real stops at 15 m with GT at
+13 m, all renders run to 40 m while their text still says "slow down due to the lead vehicle").
+A symmetric seed-noise floor cannot produce a one-sided bias, so this is a real replica effect on
+the model: the lead vehicle in the renders reads as further away / less constraining. Video:
+`outputs/full_variations_27f93c3e.mp4` (make-video on the run). **Still to do: the seed-to-seed
+noise floor on the real arm (sizes the paired-ADE scale), and a meta-action text comparison.**
 
 ## Plan
 
