@@ -189,17 +189,28 @@ def main() -> None:
         s3 = client()  # the artifact bucket: default (SSO) profile
         dst_bucket, dst_prefix = parse_s3(out)
         s3.put_object(Bucket=dst_bucket, Key=f"{dst_prefix}/{MANIFEST_NAME}", Body=json.dumps(manifest, indent=1).encode())
-        print(f"copying {len(needed)} frames server-side to {out} ...")
-        copied = 0
-        for i, (arm, camera, t) in enumerate(needed, 1):
-            src_bucket, src_key = parse_s3(str(frames[arm][camera][t]))
+        from concurrent.futures import ThreadPoolExecutor
+
+        from pd_alpamayo_eval.s3util import list_objects
+
+        existing = {key for key, _ in list_objects(s3, dst_bucket, dst_prefix)}
+        jobs = []
+        for arm, camera, t in needed:
             dst_key = f"{dst_prefix}/{arm}/{camera}/{t}.jpg"
-            if object_size(s3, dst_bucket, dst_key) is not None:
-                continue
+            if dst_key not in existing:
+                jobs.append((parse_s3(str(frames[arm][camera][t])), dst_key))
+        print(f"copying {len(jobs)} of {len(needed)} frames server-side to {out} ...")
+
+        def _copy(job):
+            (src_bucket, src_key), dst_key = job
             s3.copy_object(CopySource={"Bucket": src_bucket, "Key": src_key}, Bucket=dst_bucket, Key=dst_key)
-            copied += 1
-            if i % 50 == 0:
-                print(f"  {i}/{len(needed)}")
+
+        copied = 0
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            for _ in pool.map(_copy, jobs):
+                copied += 1
+                if copied % 200 == 0:
+                    print(f"  {copied}/{len(jobs)}")
         print(f"done: {len(instants)} instants, {len(needed)} frames ({copied} new) -> {out}")
     else:
         out_dir = Path(out)
