@@ -8,12 +8,13 @@
 #   bash scripts/nebius_entrypoint.sh exec  cmd [args]   # arbitrary command inside the model env
 #
 # Layout on the node:
-#   $PERSIST = /mnt/pdfm-data/pdfm-data-cache/alpamayo-eval   virtiofs, survives pod recycling
-#              (2 TiB, shared with pd-fm; the mount ROOT is not writable by the pod user, the
-#              pdfm-data-cache subtree is): uv/pixi caches, HF cache (+ token), the 68 GB
-#              weights, run outputs.
-#   $SCRATCH = /tmp/alpamayo-eval             per-pod SSD: the venv (fast imports; rebuilt from
-#              the warm uv cache in ~1-2 min on a fresh pod).
+#   $PERSIST = /mnt/pdfm-data/pdfm-data-cache/alpamayo-eval   virtiofs, survives pod recycling,
+#              but SHARED and nearly full (4 TiB, 100% used by other projects' staging on
+#              2026-10-13). Only what is expensive to refetch lives here: the 67 GB weights and
+#              the HF cache (+ token). Never stage data here.
+#   $SCRATCH = /tmp/alpamayo-eval             per-pod SSD (900 GB): venv, uv/pixi caches, staged
+#              exports (20 s to re-stage 1 GB from the Nebius bucket), run outputs (uploaded to
+#              the bucket at the end). Lost when the pod is recycled, which is fine.
 set -euo pipefail
 
 MODE="${1:-smoke}"
@@ -24,13 +25,12 @@ SCRATCH="${ALPAMAYO_EVAL_SCRATCH:-/tmp/alpamayo-eval}"
 RUN_ID="${ALPAMAYO_EVAL_RUN_ID:-local-$(date -u +%Y%m%dT%H%M%SZ)}"
 MODEL_REPO="nvidia/Alpamayo2-Super"
 MODEL_DIR="$PERSIST/models/alpamayo2-super"
-OUT_DIR="$PERSIST/runs/$RUN_ID"
+OUT_DIR="$SCRATCH/runs/$RUN_ID"
 # torch 2.8.0 from PyPI is a CUDA 12.8 / C++11-ABI build, so this is the matching prebuilt wheel.
 FLASH_ATTN_WHEEL="https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiTRUE-cp312-cp312-linux_x86_64.whl"
 
-export PIXI_CACHE_DIR="$PERSIST/pixi-cache"
-export UV_CACHE_DIR="$PERSIST/uv-cache"
-export UV_LINK_MODE=copy              # cache (virtiofs) and venv (/tmp) are different filesystems
+export PIXI_CACHE_DIR="$SCRATCH/pixi-cache"
+export UV_CACHE_DIR="$SCRATCH/uv-cache"
 export UV_PYTHON_PREFERENCE=only-system  # use pixi's python; never download a managed one
 export UV_PROJECT_ENVIRONMENT="$SCRATCH/venv"
 export HF_HOME="$PERSIST/hf-cache"
@@ -118,8 +118,8 @@ fi
 du -sh "$MODEL_DIR" | sed 's/^/  /'
 
 # Exports live in the Nebius bucket (s3://pd-nebius-ray/alpamayo-eval/<name>); the runner stages
-# them here once and later jobs reuse the staged copy. Data never rides in the Ray package.
-export ALPAMAYO_EVAL_EXPORTS="$PERSIST/exports"
+# them onto the pod's local SSD (reused while the pod lives). Data never rides in the Ray package.
+export ALPAMAYO_EVAL_EXPORTS="$SCRATCH/exports"
 mkdir -p "$ALPAMAYO_EVAL_EXPORTS"
 if [ -n "${AWS_ENDPOINT_URL_S3:-}" ]; then
   log "object store: $AWS_ENDPOINT_URL_S3 (key ${AWS_ACCESS_KEY_ID:0:4}...)"
