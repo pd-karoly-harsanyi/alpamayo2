@@ -131,8 +131,9 @@ def _render_bev(rec: dict | None, ref: dict | None, history_xyz: np.ndarray, col
     import matplotlib.pyplot as plt
 
     x_min, x_max, y_abs = limits
-    # Equal scale, but never narrower than a third of the forward range, so the strip stays readable.
-    y_abs = max(y_abs, (x_max - x_min) / 3)
+    # Lateral range: the data's, but at least +-8 m so the plot has width. Not equal-aspect: with a
+    # 60 m forward range an equal-aspect strip would be unreadable; lateral is exaggerated and labelled.
+    y_abs = max(y_abs, 8.0)
     fig, ax = plt.subplots(figsize=(TILE_W / 100, BEV_H / 100), dpi=100)
     # Driving direction up. The horizontal axis is y (positive = left in FLU) with the axis
     # inverted, so the left of the car is on the left of the plot.
@@ -150,8 +151,7 @@ def _render_bev(rec: dict | None, ref: dict | None, history_xyz: np.ndarray, col
     ax.plot(0, 0, "o", color="#ff7f0e", ms=8, label="ego at t0")
     ax.set_xlim(y_abs, -y_abs)
     ax.set_ylim(x_min, x_max)
-    ax.set_aspect("equal", adjustable="datalim")
-    ax.set_xlabel("left <-   lateral y (m)   -> right")
+    ax.set_xlabel("left <-   lateral y (m), stretched   -> right")
     ax.set_ylabel("forward (m)")
     ax.grid(alpha=0.3)
     handles, labels = ax.get_legend_handles_labels()
