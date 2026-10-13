@@ -181,6 +181,29 @@ seed-to-seed noise floor** (same images, different seeds): the paired 0.6 m is t
 each arm's own GT error. Next runs: (1) noise floor, real arm, seeds 0..4 or `--num-traj-samples`;
 (2) blind test (wrong/blank images, same history); (3) whole scene.
 
+**Full scene with weather variations, run `alpamayo-run-27f93c3e` (2026-10-13).** Bundle
+`ceb8e94d-de22-4558-be1d-d7da397e75f0` (replipair re-rendered with `render_variations: true`),
+export `full_variations` (174 instants x {real, rendered, rendered_rainy, rendered_snowy}, 4956
+frames, 1.9 GB), 1 sample, seed 42, 0 errors, ~55 min wall (19 s/instant incl. 4 PNGs; inference
+1.75 s). Results: `s3://pd-nebius-ray/alpamayo-eval/full_variations/runs/alpamayo-run-27f93c3e/`.
+
+| arm | minADE vs GT median / p90 (n=121 with future) | paired ADE vs real median / p90 (n=174) | CoT sentence differs from real |
+|---|---|---|---|
+| real | 0.86 / 2.47 m | - | - |
+| rendered | 1.33 / 5.96 m | 1.14 / 5.78 m | 121 / 174 |
+| rendered_rainy | 1.64 / 6.25 m | 1.73 / 5.93 m | 155 / 174 |
+| rendered_snowy | 1.17 / 5.64 m | 1.34 / 6.03 m | 159 / 174 |
+
+Where it diverges (median paired ADE per 2 s bin): 0-8 s all arms within ~1 m of real; **8-10 s
+rendered 2.4 m, rainy 5.9 m, snowy 4.7 m**; 12-18 s 1.7-3.8 m for the variations, up to 5.4 m
+(snowy, 16-18 s, "yellow traffic light ahead"). The large disagreements are bimodal: at t=+8..9 s
+the real arm is 0.3-0.4 m from GT ("keep distance ... moving slowly") while rendered is 6.3-6.4 m
+off (same keep-distance text but a go trajectory), and snowy sits at 0.6 m on some of the same
+instants. I.e. the model flips between a stop and a go mode; renders flip it more often. The
+sentence-level text diff overstates disagreement (85 distinct sentences, mostly paraphrases of
+keep-distance); a meta-action-level comparison is needed. **Still missing: the seed-to-seed noise
+floor on the real arm, which decides whether 1.1 m median / 5.8 m p90 is signal.**
+
 ## Plan
 
 **Phase 0 — cluster hello-world.** DONE (pd-fm bench on 1xH100).
