@@ -7,7 +7,7 @@
     "camera_mode": "original",
     "rolling_shutter_mode": "auto",
     "color_mapping_mode": "auto",
-    "render_variations": false,
+    "render_variations": true,
     "off_axis_offsets": null,
     "write_valid_pixel_masks": false,
     "write_dynamic_agent_masks": false,
