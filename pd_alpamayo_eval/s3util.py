@@ -99,23 +99,35 @@ def upload_dir(s3, local_dir: Path, uri: str, log=print) -> int:
     return n
 
 
-def copy_between_stores(src, dst, src_uri: str, dst_uri: str, log=print) -> tuple[int, int]:
+def copy_between_stores(src, dst, src_uri: str, dst_uri: str, log=print, workers: int = 16) -> tuple[int, int]:
     """Stream every object under ``src_uri`` to ``dst_uri`` across two clients; skip same-size objects.
 
-    Returns ``(copied, skipped)``. Objects stream through memory one at a time (frames are < 1 MB).
+    Returns ``(copied, skipped)``. Objects stream through memory (frames are < 1 MB), ``workers``
+    at a time; boto3 clients are thread-safe.
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     src_bucket, src_prefix = parse_s3(src_uri)
     dst_bucket, dst_prefix = parse_s3(dst_uri)
-    copied = skipped = 0
+    existing = {key: size for key, size in list_objects(dst, dst_bucket, dst_prefix)}
+    todo = []
+    skipped = 0
     for key, size in list_objects(src, src_bucket, src_prefix):
-        rel = key[len(src_prefix) :].lstrip("/")
-        dst_key = f"{dst_prefix}/{rel}"
-        if object_size(dst, dst_bucket, dst_key) == size:
+        dst_key = f"{dst_prefix}/{key[len(src_prefix):].lstrip('/')}"
+        if existing.get(dst_key) == size:
             skipped += 1
-            continue
+        else:
+            todo.append((key, dst_key))
+
+    def _copy(pair: tuple[str, str]) -> None:
+        key, dst_key = pair
         body = src.get_object(Bucket=src_bucket, Key=key)["Body"].read()
         dst.put_object(Bucket=dst_bucket, Key=dst_key, Body=body)
-        copied += 1
-        if copied % 50 == 0:
-            log(f"  copied {copied} files ...")
+
+    copied = 0
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for _ in pool.map(_copy, todo):
+            copied += 1
+            if copied % 100 == 0:
+                log(f"  copied {copied}/{len(todo)} files ...")
     return copied, skipped
