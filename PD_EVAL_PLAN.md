@@ -157,7 +157,29 @@ Never ship data through Ray `working_dir` (user decision 2026-10-13; one such pa
 First export: bundle `ce48f271-05b1-4f04-a1d1-af1472473ed9` (nightly Italy dynamic replica,
 replipair re-rendered with `pd_alpamayo_eval/replipair_step_alpamayo.json`: all 30 fps frames,
 original f-theta, both arms), window 5-8 s -> `w5s_3s`, 30 instants, 462 frames, 192 MB, in both
-buckets. First run pending (needs the user's submit).
+buckets.
+
+**First run `alpamayo-run-0d74dd90` (2026-10-13), 30 instants x {real, rendered}, 1 sample, seed 42,
+10 diffusion steps, 0 errors.** Results: `s3://pd-nebius-ray/alpamayo-eval/w5s_3s/runs/alpamayo-run-0d74dd90/`.
+
+| measured | value |
+|---|---|
+| inference per instant (CoT + 10-step expert) | 1.73 s median; CoT is one sentence (~79 chars), e.g. "Keep distance to the lead vehicle because traffic ahead is moving slowly." |
+| peak VRAM | 69.0 GiB |
+| staging 463 files Nebius -> volume | 21 s (once) |
+| minADE vs GT, real | median 1.12 m, p90 1.62 m |
+| minADE vs GT, rendered | median 0.69 m, p90 2.25 m |
+| paired ADE real vs rendered (same seed) | median 0.61 m, p90 1.43 m |
+| identical CoT text in both arms | 18 / 30 instants |
+
+Reading: ego frame, timestamps and image path are right (predictions overlap GT in direction and
+scale on the PNGs; a convention bug would show as ~10 m). The scene is stop-and-go behind a lead
+car; the biggest arm disagreement (t0 1700000005807012000: real 1.6 m, rendered 3.8 m) is the
+rendered arm saying "Resume speed from stop" where the real arm keeps distance. A full ~20 s scene
+costs ~10 min of H100, so sampling is cheap. **Nothing is interpretable yet without the
+seed-to-seed noise floor** (same images, different seeds): the paired 0.6 m is the same size as
+each arm's own GT error. Next runs: (1) noise floor, real arm, seeds 0..4 or `--num-traj-samples`;
+(2) blind test (wrong/blank images, same history); (3) whole scene.
 
 ## Plan
 

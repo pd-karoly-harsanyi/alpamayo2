@@ -85,6 +85,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if unknown:
         raise SystemExit(f"arms {unknown} are not in the export (has {export_arms})")
 
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
     import torch
 
     from alpamayo2_super import helper
@@ -161,7 +165,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     np.savez(out_dir / f"{t0_ns}_{arm}.npz", **npz)
                     if args.save_viz:
                         try:
-                            plot_inference_result(
+                            fig, _ = plot_inference_result(
                                 data=data,
                                 pred_xyz=pred_xyz,
                                 extra=extra,
@@ -170,6 +174,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                                 model_id=args.model_id,
                                 seed=args.seed,
                             )
+                            plt.close(fig)  # NVIDIA's plotter leaves the figure open; 60+ of them leak host memory
                         except Exception as exc:  # viz is best-effort; GT may be absent
                             rec["viz_error"] = f"{type(exc).__name__}: {exc}"
                     del pred_xyz, _pred_rot, _logprob, extra, model_inputs
