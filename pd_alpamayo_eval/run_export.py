@@ -154,7 +154,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     rec["peak_vram_gib"] = round(torch.cuda.max_memory_allocated() / 2**30, 2)
                     pred = pred_xyz.cpu().numpy()[0, 0]  # (S, 64, 3)
                     preds[(t0_ns, arm)] = pred
-                    rec["cot"] = [str(c) for c in extra["cot"]]
+                    # extra["cot"] is an object array of shape (batch, sets, samples); one string per sample.
+                    rec["cot"] = [str(c) for c in np.asarray(extra["cot"], dtype=object).reshape(-1).tolist()]
                     npz: dict[str, np.ndarray] = {"pred_xyz": pred}
                     if data.get("ego_future_available"):
                         gt = data["ego_future_xyz"].cpu().numpy()[0, 0]

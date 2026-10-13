@@ -28,7 +28,8 @@ git = "*"
 ray = { version = "==2.55.1", extras = ["default"] }
 boto3 = ">=1.34"  # mirror-export (laptop copies between AWS and Nebius) and credential forwarding
 
-# Laptop-side CPU tests of the PD loader (no model, no GPU): `pixi run -e dev test-pd`.
+# Laptop-side CPU tools: loader tests (`pixi run -e dev test-pd`) and the results video
+# (`pixi run -e dev make-video <run uri>`). No model, no GPU.
 [feature.dev.dependencies]
 pytorch-cpu = "2.*"
 scipy = "*"
@@ -36,6 +37,9 @@ pillow = "*"
 numpy = "*"
 einops = "*"
 pytest = "*"
+matplotlib = "*"
+ffmpeg = "*"
+boto3 = "*"
 
 [environments]
 default = { solve-group = "default" }
@@ -50,4 +54,9 @@ mirror-export = "python pd_alpamayo_eval/mirror_export.py"
 
 [tasks.test-pd]
 cmd = "pytest -q tests/test_pd_load_export.py"
+env = { PYTHONPATH = "src:." }
+
+# Side-by-side video of a run: `pixi run -e dev make-video s3://pd-nebius-ray/alpamayo-eval/<name>/runs/<id>`
+[tasks.make-video]
+cmd = "python pd_alpamayo_eval/make_video.py"
 env = { PYTHONPATH = "src:." }

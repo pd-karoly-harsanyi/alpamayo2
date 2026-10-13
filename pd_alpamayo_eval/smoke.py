@@ -101,7 +101,7 @@ def run(
         pred_xy = pred_xyz.cpu().numpy()[0, 0, :, :, :2].transpose(0, 2, 1)
         ade = np.linalg.norm(pred_xy - gt_xy[None, ...], axis=1).mean(-1)
         record["min_ade_m"] = round(float(ade.min()), 3)
-        record["cot"] = str(extra["cot"][0])
+        record["cot"] = [str(c) for c in np.asarray(extra["cot"], dtype=object).reshape(-1).tolist()]
 
         stem = out_dir / f"sample{index}"
         _, metadata = plot_inference_result(
