@@ -108,6 +108,57 @@ synchronized). 10 Hz curated bundles match the model's 0.1 s frame spacing.
    invited to the tenant; key creation was in progress at the time of writing. No `nebius` AWS
    profile exists yet on this box (`~/.aws/config` has only `default` = AWS SSO).
 
+## Phase 1 results (2026-10-12, jobs `alpamayo-probe-f5d8ec4f`, `alpamayo-smoke-16f38bee`)
+
+Files: `pixi.toml` (+ lock), `scripts/submit_nebius.py`, `scripts/nebius_entrypoint.sh`,
+`pd_alpamayo_eval/smoke.py`. Submit with `pixi run -e launch submit-nebius {probe|smoke|exec} --wait`.
+Repo goes up via Ray `working_dir` (2.3 MB), no clone on the pod.
+
+| what | measured |
+|---|---|
+| worker image | has `pixi`, `uv`, `git` **and** `nvcc` (`/usr/local/cuda`); driver 580; runs as uid 1000 `ray` |
+| `/mnt/pdfm-data` | mount root is root-owned, NOT writable; `/mnt/pdfm-data/pdfm-data-cache` is world-writable -> everything lives under `pdfm-data-cache/alpamayo-eval/` |
+| env build, cold | 112 s (`uv sync --locked`, flash-attn from the prebuilt cu12/torch2.8/cxx11abiTRUE wheel, no compile) |
+| env build, warm pod | 1 s (venv on the pod's `/tmp` survives between jobs on the same pod) |
+| weights | 67 GB in 51 s to `pdfm-data-cache/alpamayo-eval/models/alpamayo2-super`; persisted |
+| model load | 28.5 s from virtiofs, 66.71 GiB VRAM after load (bf16, `device_map=cuda:0`) |
+| cold start to running | ~5 min (first probe: PENDING -> RUNNING on a fresh `gpuh100` pod) |
+| HF access | the pod env carries a cluster `HF_TOKEN` that can read the model but is **403 on the PhysicalAI-AV dataset** |
+
+So risks 1-4 are closed. The remaining blocker is dataset access: the smoke died in
+`PhysicalAIAVDatasetInterface()` with `GatedRepoError`. Fix = forward the `harsandor` token once
+(`--forward-hf-token`); the entrypoint persists it at `pdfm-data-cache/alpamayo-eval/hf-cache/token`
+and unsets the pod's `HF_TOKEN` at runtime so the file governs. Claude cannot submit the
+token-bearing job (auto-mode classifier); the user runs it. Inference timing and minADE are still
+to be measured (next run).
+
+## Phase 2 state (2026-10-13): PD data path, no HF dataset needed
+
+Decision (user): run on our own frames, never on PhysicalAI-AV via HF. Data moves like pd-fm's:
+
+1. `pd_alpamayo_eval/export_from_pdncc.py --bundle-id <uid> --name <name> --start-s --duration-s`
+   (pdncc pixi env) selects instants (ego-pose grid, 4 context frames x 7 cameras per arm, 10 Hz)
+   and writes `<replipair artifact>/tmp_alpamayo_eval/<name>/` in the artifact bucket by
+   server-side copy. Arms: `real` (= replipair `original/`), `rendered`, optional
+   `rendered_<variation>`. Format: `pd_alpamayo_eval/EXPORT_FORMAT.md`; loader
+   `pd_alpamayo_eval/load_export.py` (tests: `pixi run -e dev test-pd`).
+2. `pixi run -e launch mirror-export <artifact export uri> s3://pd-nebius-ray/alpamayo-eval/<name>`
+   copies once from the laptop (AWS `default` profile -> local `nebius` profile; one egress).
+3. `pixi run -e launch submit-nebius run --wait --forward-nebius-credentials -- --export
+   s3://pd-nebius-ray/alpamayo-eval/<name> --save-viz` (user runs it: carries the Nebius key, the
+   `pdfm-ray-shell-forward` key of SA `rayio-storage`, as every pd-fm Nebius job does). The worker
+   stages the export to `/mnt/pdfm-data/pdfm-data-cache/alpamayo-eval/exports/<name>` once, runs
+   every instant x arm with one seed (common random numbers), writes results to
+   `s3://pd-nebius-ray/alpamayo-eval/<name>/runs/<run id>/` (results.jsonl, per-instant json+npz,
+   summary.json, PNGs). `mirror-export` in reverse puts a run next to the export in the artifact.
+
+Never ship data through Ray `working_dir` (user decision 2026-10-13; one such package was deleted).
+
+First export: bundle `ce48f271-05b1-4f04-a1d1-af1472473ed9` (nightly Italy dynamic replica,
+replipair re-rendered with `pd_alpamayo_eval/replipair_step_alpamayo.json`: all 30 fps frames,
+original f-theta, both arms), window 5-8 s -> `w5s_3s`, 30 instants, 462 frames, 192 MB, in both
+buckets. First run pending (needs the user's submit).
+
 ## Plan
 
 **Phase 0 — cluster hello-world.** DONE (pd-fm bench on 1xH100).

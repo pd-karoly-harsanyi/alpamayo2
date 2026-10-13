@@ -1,0 +1,16 @@
+{
+  "type": "ReplipairCreationStep",
+  "skip_if_already_ran": false,
+  "replipair_type": "pdncc",
+  "replipair_kwargs": {
+    "max_eval_frames": null,
+    "camera_mode": "original",
+    "rolling_shutter_mode": "auto",
+    "color_mapping_mode": "auto",
+    "render_variations": false,
+    "off_axis_offsets": null,
+    "write_valid_pixel_masks": false,
+    "write_dynamic_agent_masks": false,
+    "apply_occlusion_mask": false
+  }
+}

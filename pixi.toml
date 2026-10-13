@@ -1,0 +1,53 @@
+# PD-internal bootstrap for running this repo on the Nebius Ray cluster (see PD_EVAL_PLAN.md).
+#
+# pixi does NOT replace NVIDIA's `uv.lock`: the model environment is still `uv sync --locked`
+# from `pyproject.toml` + `uv.lock`, exactly as the README says. pixi only supplies the tools the
+# Ray worker's base image may lack - a Python 3.12 interpreter, `uv` and `git` - so that
+# `scripts/nebius_entrypoint.sh` can build the model env on the node without `nvcc` (the one
+# package that would need it, flash-attn, is installed from the prebuilt GitHub-release wheel).
+#
+#   pixi install --locked -e default    # on the Ray worker (the entrypoint does this)
+#   pixi run -e launch submit-nebius    # from a laptop: Ray Jobs API client only
+#
+# `pixi.toml` takes precedence over `pyproject.toml` when both exist, so pixi never tries to
+# interpret NVIDIA's project table.
+
+[workspace]
+name = "alpamayo2-eval"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+python = "3.12.*"
+uv = ">=0.9.7"
+git = "*"
+
+# Submitting machine only. Pinned to the cluster's Ray (2.55.1, same as pd-fm's `launch` env)
+# for Jobs-API compatibility; the worker never imports ray.
+[feature.launch.pypi-dependencies]
+ray = { version = "==2.55.1", extras = ["default"] }
+boto3 = ">=1.34"  # mirror-export (laptop copies between AWS and Nebius) and credential forwarding
+
+# Laptop-side CPU tests of the PD loader (no model, no GPU): `pixi run -e dev test-pd`.
+[feature.dev.dependencies]
+pytorch-cpu = "2.*"
+scipy = "*"
+pillow = "*"
+numpy = "*"
+einops = "*"
+pytest = "*"
+
+[environments]
+default = { solve-group = "default" }
+launch = { features = ["launch"], solve-group = "default" }
+dev = { features = ["dev"], solve-group = "default" }
+
+[tasks]
+# Pass-through: `pixi run -e launch submit-nebius probe --wait`
+submit-nebius = "python scripts/submit_nebius.py"
+# Laptop copy between the artifact bucket (AWS, `default` profile) and Nebius (`nebius` profile).
+mirror-export = "python pd_alpamayo_eval/mirror_export.py"
+
+[tasks.test-pd]
+cmd = "pytest -q tests/test_pd_load_export.py"
+env = { PYTHONPATH = "src:." }

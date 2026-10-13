@@ -222,3 +222,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# PD eval: local exports shipped to the cluster via submit_nebius.py --with-exports
+exports/
