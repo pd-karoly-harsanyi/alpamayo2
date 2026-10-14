@@ -53,7 +53,7 @@ IMG_H = 360
 BEV_H = 400
 TEXT_H = 110
 HEADER_H = 70
-TIMELINE_H = 230
+TIMELINE_H = 420  # error-over-time strip: one row per arm
 PAD = 8
 FRUSTUM_LENGTH_M = {30: 9.0, 70: 6.0, 120: 5.0}  # by horizontal FOV; drawn at the ego on the BEV
 _FOV_RE = re.compile(r"(\d+)fov")
@@ -297,25 +297,30 @@ def _render_timeline(times_s: np.ndarray, series: dict[str, np.ndarray], colors:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    fig, ax = plt.subplots(figsize=(width / 100, TIMELINE_H / 100), dpi=100)
+    # One row per arm (same y scale); the real arm's error vs the recorded future is dotted in every row.
+    arms = [k for k in series if k != "real vs recorded future"] or ["real vs recorded future"]
+    gt_series = series.get("real vs recorded future")
+    fig, axes = plt.subplots(len(arms), 1, figsize=(width / 100, TIMELINE_H / 100), dpi=100, sharex=True, squeeze=False)
     y_max = 0.5
-    for name, values in series.items():
-        if name == "real vs recorded future":
-            ax.plot(times_s, values, color="black", lw=1.2, ls=":", label=f"{name} (median {np.nanmedian(values):.2f} m)")
-        else:
-            ax.plot(times_s, values, color=colors.get(name, "#7f7f7f"), lw=1.8, label=f"{name} vs real (median {np.nanmedian(values):.2f} m)")
+    for values in series.values():
         if np.isfinite(values).any():
             y_max = max(y_max, float(np.nanpercentile(values, 98)))
-    ax.set_xlim(float(times_s[0]), float(times_s[-1]) if times_s[-1] > times_s[0] else float(times_s[0]) + 1)
-    ax.set_ylim(0, y_max * 1.1)
-    ax.set_xlabel("time in scene (s)")
-    ax.set_ylabel("ADE (m)")
-    ax.grid(alpha=0.3)
-    ax.legend(loc="upper left", fontsize=7, ncol=2, framealpha=0.85)
-    ax.set_title("trajectory error per instant (paired ADE of each arm against the real arm; dotted: real arm against the recorded future)", fontsize=8)
-    fig.tight_layout(pad=0.4)
+    for ax, name in zip(axes[:, 0], arms):
+        if gt_series is not None and name != "real vs recorded future":
+            ax.plot(times_s, gt_series, color="black", lw=0.9, ls=":", label="real vs recorded future")
+        values = series[name]
+        label = f"{name} vs real (median {np.nanmedian(values):.2f} m)" if name != "real vs recorded future" else f"{name} (median {np.nanmedian(values):.2f} m)"
+        ax.plot(times_s, values, color=colors.get(name, "#7f7f7f"), lw=1.6, label=label)
+        ax.set_ylim(0, y_max * 1.1)
+        ax.grid(alpha=0.3)
+        ax.legend(loc="upper left", fontsize=6, ncol=2, framealpha=0.85)
+        ax.tick_params(labelsize=7)
+    axes[0, 0].set_xlim(float(times_s[0]), float(times_s[-1]) if times_s[-1] > times_s[0] else float(times_s[0]) + 1)
+    axes[-1, 0].set_xlabel("time in scene (s)", fontsize=8)
+    axes[0, 0].set_title("paired ADE of each arm against the real arm per instant (dotted: real arm against the recorded future); same scale", fontsize=8)
+    fig.tight_layout(pad=0.3)
     fig.canvas.draw()
-    xs = np.array([ax.transData.transform((t, 0.0))[0] for t in times_s])
+    xs = np.array([axes[0, 0].transData.transform((t, 0.0))[0] for t in times_s])
     rgba = np.asarray(fig.canvas.buffer_rgba())
     plt.close(fig)
     return rgba[..., :3].copy(), xs
