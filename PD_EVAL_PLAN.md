@@ -232,6 +232,31 @@ on 72 % of instants between two seeds of the SAME images, so sentence-level text
 sampling noise and useless as a metric; meta-actions are required. Per-scene gate candidates:
 paired-ADE p90 relative to the seed floor, and the signed distance bias (floor: ~0, symmetric).
 
+**Two more scenes (2026-10-14), same recipe, both with rainy + snowy.** Madrid intersection: bundle
+`ea732026-8a79-474e-9bf4-70b2f6438256`, export `madrid_full_variations` (185 instants), run
+`alpamayo-run-e368b20f`. Austria roundabout: bundle `890838c3-7aa1-4278-b8e4-e4040b0688fb`,
+export `austria_full_variations` (186 instants), run `alpamayo-run-17c45f0a`. Both seed 42,
+1 sample, no PNGs (~35 min each, 11 s/instant for 4 arms). `compare-runs`, reference real@seed42:
+
+| scene / column | paired ADE med / p90 | distance diff med | longer / shorter | ADE vs GT med (real) |
+|---|---|---|---|---|
+| Madrid rendered | 2.38 / 7.65 m | +0.41 m | 48 % / 39 % | 3.27 m (real 2.80 m) |
+| Madrid rainy | 2.44 / 7.60 m | +0.12 m | 45 % / 43 % | 3.08 m |
+| Madrid snowy | 2.32 / 7.40 m | -1.04 m | 38 % / 51 % | 2.55 m |
+| Austria rendered | 0.73 / 4.01 m | -1.01 m | 16 % / 50 % | 2.56 m (real 1.99 m) |
+| Austria rainy | 1.04 / 3.78 m | -0.91 m | 21 % / 48 % | 2.13 m |
+| Austria snowy | 1.31 / 4.39 m | -1.45 m | 20 % / 52 % | 2.71 m |
+
+Reading across the three scenes: (1) the model itself is less competent on the intersection and
+roundabout than on the tram street (real-arm ADE vs GT 2.8 m / 2.0 m vs 0.86 m), so paired
+numbers must be read against a per-scene seed floor, not Italy's 0.95 m; (2) the **direction of
+the speed shift is scene-dependent**: Italy renders made the model drive longer (+2.6 m, 68 %
+longer), Austria renders make it drive shorter (-1.0 m, 50 % shorter vs 16 % longer), Madrid is
+symmetric; so "renders bias speed" is the general statement, "faster" was Italy-specific;
+(3) the tails are large everywhere (p90 4-7.7 m). Videos: `outputs/madrid_full_variations_e368b20f.mp4`,
+`outputs/austria_full_variations_17c45f0a.mp4`. Next: seed-floor run (`--arms real --seed 1`) for
+Madrid and Austria to size their paired numbers.
+
 ## Plan
 
 **Phase 0 — cluster hello-world.** DONE (pd-fm bench on 1xH100).
