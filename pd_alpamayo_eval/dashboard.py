@@ -42,7 +42,7 @@ from pd_alpamayo_eval.make_video import (  # noqa: E402
     _stage,
 )
 
-THUMB_W = 640
+THUMB_W = 960
 OVERLAY_COLORS = {"history": (31, 119, 180), "gt": (0, 0, 0)}
 
 
@@ -197,6 +197,8 @@ class Session:
                     if arr is not None:
                         x_all += [float(np.asarray(arr).reshape(-1, 3)[:, 0].max()), float(np.asarray(arr).reshape(-1, 3)[:, 0].min())]
         self.forward_range = (min(x_all) - 3, max(x_all) + 3)
+        finite = [v for arr in list(self.paired.values()) + [self.gt_ade[self.reference]] for v in arr if np.isfinite(v)]
+        self.error_y_max = max(0.5, float(np.percentile(finite, 99))) * 1.05 if finite else 1.0
 
     @lru_cache(maxsize=4096)
     def history(self, t0: int) -> np.ndarray:
@@ -318,7 +320,7 @@ def bev_figure(s: Session, col: str, index: int, stretch_lateral: bool, shown_ca
         fig.add_trace(go.Scatter(x=[gt[-1, 1]], y=[gt[-1, 0]], mode="markers", marker=dict(symbol="x", color="black", size=9), showlegend=False, hoverinfo="skip"))
     lat = 12.0
     fig.update_layout(
-        height=480, margin=dict(l=50, r=10, t=10, b=40), legend=dict(x=0.01, y=0.99, font=dict(size=10), bgcolor="rgba(255,255,255,0.8)"),
+        autosize=True, height=480, margin=dict(l=50, r=10, t=10, b=40), legend=dict(x=0.01, y=0.99, font=dict(size=10), bgcolor="rgba(255,255,255,0.8)"),
         xaxis=dict(title="left  <-  lateral y (m)  ->  right" + ("  (stretched)" if stretch_lateral else ""), range=[lat, -lat], zeroline=True),
         yaxis=dict(title="forward (m)", range=list(s.forward_range), **({} if stretch_lateral else {"scaleanchor": "x", "scaleratio": 1})),
         paper_bgcolor="white", plot_bgcolor="white",
@@ -327,34 +329,31 @@ def bev_figure(s: Session, col: str, index: int, stretch_lateral: bool, shown_ca
     return fig
 
 
-def timeline_figure(s: Session, cols: list[str], index: int):
-    """One row per non-reference column (same y scale), each with the reference's error vs GT dotted for context."""
+def card_timeline_figure(s: Session, col: str, index: int):
+    """Small error-over-time plot for one column (same y scale on every card); click to jump."""
     import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 
-    rows = [c for c in cols if c != s.reference] or [s.reference]
-    y_max = max([0.5] + [float(np.nanpercentile(s.paired[c], 99)) for c in rows if c != s.reference and np.isfinite(s.paired[c]).any()]
-                + [float(np.nanpercentile(s.gt_ade[s.reference], 99))] if np.isfinite(s.gt_ade[s.reference]).any() else [0.5])
-    fig = make_subplots(rows=len(rows), cols=1, shared_xaxes=True, vertical_spacing=0.03,
-                        subplot_titles=[f"{c} vs {s.reference}: median {np.nanmedian(s.paired[c]):.2f} m, p90 {np.nanpercentile(s.paired[c], 90):.2f} m" if c != s.reference else f"{c} vs recorded future" for c in rows])
-    for r, col in enumerate(rows, start=1):
+    fig = go.Figure()
+    if col == s.reference:
+        fig.add_trace(go.Scatter(x=s.times, y=s.gt_ade[col], mode="lines+markers", marker=dict(size=3), line=dict(color="black", width=1.5),
+                                 name="vs recorded future", hovertemplate="vs recorded future %{y:.2f} m<extra></extra>"))
+        title = f"{col} vs recorded future: median {np.nanmedian(s.gt_ade[col]):.2f} m"
+    else:
         fig.add_trace(go.Scatter(x=s.times, y=s.gt_ade[s.reference], mode="lines", line=dict(color="black", width=1, dash="dot"),
-                                 name=f"{s.reference} vs recorded future", showlegend=r == 1, hovertemplate="ref vs GT %{y:.2f} m<extra></extra>"), row=r, col=1)
-        if col != s.reference:
-            fig.add_trace(go.Scatter(x=s.times, y=s.paired[col], mode="lines+markers", marker=dict(size=3), line=dict(color=s.colors[col], width=2),
-                                     name=f"{col} vs {s.reference}", hovertemplate=f"{col} %{{y:.2f}} m<extra></extra>"), row=r, col=1)
-        fig.add_vline(x=float(s.times[index]), line=dict(color="#d62728", width=2), row=r, col=1)
-        fig.update_yaxes(range=[0, y_max * 1.05], gridcolor="#eee", title_text="ADE (m)" if r == 1 else None, row=r, col=1)
-    fig.update_xaxes(title_text="time in scene (s)", gridcolor="#eee", row=len(rows), col=1)
-    fig.update_layout(height=60 + 150 * len(rows), margin=dict(l=50, r=10, t=30, b=40), legend=dict(orientation="h", y=1.08, font=dict(size=10)),
+                                 name=f"{s.reference} vs recorded future", hovertemplate="ref vs recorded future %{y:.2f} m<extra></extra>"))
+        fig.add_trace(go.Scatter(x=s.times, y=s.paired[col], mode="lines+markers", marker=dict(size=3), line=dict(color=s.colors[col], width=2),
+                                 name=f"vs {s.reference}", hovertemplate=f"vs {s.reference} %{{y:.2f}} m<extra></extra>"))
+        title = f"{col} vs {s.reference}: median {np.nanmedian(s.paired[col]):.2f} m, p90 {np.nanpercentile(s.paired[col], 90):.2f} m"
+    fig.add_vline(x=float(s.times[index]), line=dict(color="#d62728", width=2))
+    fig.update_layout(height=190, margin=dict(l=40, r=8, t=26, b=30), title=dict(text=title, font=dict(size=11), x=0.02, y=0.97),
+                      showlegend=False, xaxis=dict(title=None, gridcolor="#eee"), yaxis=dict(title="ADE (m)", range=[0, s.error_y_max], gridcolor="#eee"),
                       paper_bgcolor="white", plot_bgcolor="white", clickmode="event", hovermode="x unified")
-    fig.update_annotations(font_size=11)
     return fig
 
 
 def build_app(s: Session):
     import dash
-    from dash import Input, Output, State, ctx, dash_table, dcc, html
+    from dash import ALL, Input, Output, State, ctx, dash_table, dcc, html
     from flask import Response
 
     app = dash.Dash(__name__, title=f"alpamayo eval: {s.export_name}")
@@ -386,8 +385,7 @@ def build_app(s: Session):
         ]),
         dcc.Slider(id="idx", min=0, max=n - 1, step=1, value=0, marks=marks, tooltip={"placement": "bottom", "always_visible": False}, updatemode="drag"),
         dcc.Interval(id="tick", interval=500, disabled=True),
-        html.Div(id="cards", style={"display": "flex", "flexWrap": "wrap", "gap": "10px", "marginTop": "10px"}),
-        dcc.Graph(id="timeline", config={"displayModeBar": False}),
+        html.Div(id="cards", style={"display": "grid", "gridTemplateColumns": "repeat(4, minmax(0, 1fr))", "gap": "8px", "marginTop": "10px"}),
         html.H4("summary over the scene (compare-runs)"),
         dash_table.DataTable(data=s.summary_rows(), columns=[{"name": k, "id": k} for k in s.summary_rows()[0]], style_cell={"fontSize": 13, "padding": "4px"}, style_header={"fontWeight": "bold"}),
     ])
@@ -399,33 +397,34 @@ def build_app(s: Session):
         return (not playing), ("⏸ pause" if playing else "▶ play"), int(1000 / speed)
 
     @app.callback(Output("idx", "value"), Input("tick", "n_intervals"), Input("back", "n_clicks"), Input("fwd", "n_clicks"),
-                  Input("timeline", "clickData"), State("idx", "value"), prevent_initial_call=True)
-    def _move(_t, _b, _f, click, idx):
+                  Input({"type": "tl", "col": ALL}, "clickData"), State("idx", "value"), prevent_initial_call=True)
+    def _move(_t, _b, _f, clicks, idx):
         trig = ctx.triggered_id
         if trig == "tick" or trig == "fwd":
             return min(idx + 1, n - 1) if trig == "fwd" else (idx + 1) % n
         if trig == "back":
             return max(idx - 1, 0)
-        if trig == "timeline" and click:
-            t = click["points"][0]["x"]
-            return int(np.argmin(np.abs(s.times - t)))
+        if isinstance(trig, dict) and trig.get("type") == "tl":
+            click = ctx.triggered[0]["value"]
+            if click and click.get("points"):
+                return int(np.argmin(np.abs(s.times - click["points"][0]["x"])))
         return idx
 
-    @app.callback(Output("cards", "children"), Output("timeline", "figure"), Output("where", "children"),
+    @app.callback(Output("cards", "children"), Output("cards", "style"), Output("where", "children"),
                   Input("idx", "value"), Input("cols", "value"), Input("cameras", "value"), Input("aspect", "value"), Input("overlay", "value"))
     def _view(idx, selected, camera_set, aspect, overlay):
         t0 = s.t0s[idx]
         selected = [c for c in cols if c in (selected or [])]
         cameras = CAMERA_SETS[camera_set]
         ncol = 3 if len(cameras) >= 3 else len(cameras)
-        img_w = THUMB_W // ncol
+        img_pct = f"{100 / ncol:.3f}%"
         q = "?overlay=1" if overlay else ""
         cards = []
         ref = s.columns[s.reference].get(t0)
         for col in selected:
             rec = s.columns[col].get(t0)
             available = rec is not None
-            imgs = [html.Img(src=f"/img/{col}/{cam}/{idx}{q}", style={"width": f"{img_w}px", "display": "block"}, title=CAMERA_LABELS.get(cam, cam)) for cam in cameras] if available else [html.Div("not available for this instant", style={"width": f"{THUMB_W}px", "height": "120px", "background": "#ccc"})]
+            imgs = [html.Img(src=f"/img/{col}/{cam}/{idx}{q}", style={"width": img_pct, "display": "block"}, title=CAMERA_LABELS.get(cam, cam)) for cam in cameras] if available else [html.Div("not available for this instant", style={"width": "100%", "height": "120px", "background": "#ccc"})]
             text = _cot_text(rec) if rec else ""
             differs = bool(rec and ref and col != s.reference and _cot_text(rec) != _cot_text(ref))
             metrics = []
@@ -435,15 +434,17 @@ def build_app(s: Session):
                 metrics.append(f"vs {s.reference} {s.paired[col][idx]:.2f} m")
             if np.isfinite(s.end_dist[col][idx]):
                 metrics.append(f"predicted distance {s.end_dist[col][idx]:.1f} m")
-            cards.append(html.Div(style={"width": f"{THUMB_W}px", "border": "1px solid #ddd", "background": "#fafafa"}, children=[
+            cards.append(html.Div(style={"minWidth": 0, "border": "1px solid #ddd", "background": "#fafafa"}, children=[
                 html.Div(f"{col}  ·  {s.run_of[col]}", style={"background": "#222", "color": "white", "padding": "3px 6px", "fontSize": "13px"}),
                 html.Div(imgs, style={"display": "flex", "flexWrap": "wrap"}),
-                dcc.Graph(figure=bev_figure(s, col, idx, bool(aspect), cameras), config={"displayModeBar": False}),
+                dcc.Graph(figure=bev_figure(s, col, idx, bool(aspect), cameras), config={"displayModeBar": False, "responsive": True}, style={"width": "100%"}),
                 html.Div(text or "(no output)", style={"margin": "4px 8px", "padding": "6px", "background": "white", "border": f"{'3px solid #d62728' if differs else '1px solid #999'}", "minHeight": "40px"}),
-                html.Div("   ·   ".join(metrics), style={"margin": "2px 8px 8px", "fontSize": "13px", "color": "#333"}),
+                html.Div("   ·   ".join(metrics), style={"margin": "2px 8px 6px", "fontSize": "13px", "color": "#333"}),
+                dcc.Graph(id={"type": "tl", "col": col}, figure=card_timeline_figure(s, col, idx), config={"displayModeBar": False, "responsive": True}, style={"width": "100%"}),
             ]))
+        style = {"display": "grid", "gridTemplateColumns": f"repeat({max(1, len(selected))}, minmax(0, 1fr))", "gap": "8px", "marginTop": "10px"}
         where = f"instant {idx + 1}/{n}   t = +{s.times[idx]:.1f} s"
-        return cards, timeline_figure(s, selected, idx), where
+        return cards, style, where
 
     return app
 
