@@ -75,7 +75,7 @@ def download_prefix(s3, uri: str, local_dir: Path, log=print) -> int:
         if dst.is_file() and dst.stat().st_size == size:
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
-        tmp = dst.with_name(dst.name + ".part")
+        tmp = dst.with_name(f"{dst.name}.part-{os.getpid()}")  # per-process: concurrent stagers must not collide
         s3.download_file(bucket, key, str(tmp))
         os.replace(tmp, dst)
         n += 1
