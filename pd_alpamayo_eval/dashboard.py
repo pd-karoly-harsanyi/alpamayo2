@@ -425,11 +425,9 @@ def build_app(s: Session):
                 swatch("#000000", "recorded future (dashed)"),
             ]),
             dcc.Graph(id={"type": "bev", "col": col}, figure={}, config={"displayModeBar": False, "responsive": True}, style={"width": "100%", "height": f"{BEV_H}px"}),
-            html.Div(style={"margin": "6px 8px 0", "fontSize": "12px", "color": "#444"}, children=[
-                html.B("Model reasoning (Chain-of-Causation)"),
-                html.Span(" - the sentence the model generated from these cameras before sampling the trajectory"
-                          + (f"; red border = differs from the {s.reference} arm" if col != s.reference else "")),
-            ]),
+            html.Div(html.B("model reasoning"), title="Chain-of-Causation: the sentence the model generated from these cameras before sampling the trajectory"
+                     + (f". Red border: differs from the {s.reference} arm." if col != s.reference else ""),
+                     style={"margin": "6px 8px 0", "fontSize": "12px", "color": "#444"}),
             html.Div(id={"type": "txt", "col": col}, children="", style={"margin": "4px 8px", "padding": "6px", "background": "white", "border": "1px solid #999", "minHeight": "40px"}),
             html.Div(id={"type": "met", "col": col}, children="", title="ADE = mean distance between two trajectories over the 6.4 s horizon; predicted distance = length of the predicted path", style={"margin": "2px 8px 6px", "fontSize": "13px", "color": "#333"}),
             dcc.Graph(id={"type": "tl", "col": col}, figure={}, config={"displayModeBar": False, "responsive": True}, style={"width": "100%", "height": f"{TL_H}px"}),
