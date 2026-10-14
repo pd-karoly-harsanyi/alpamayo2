@@ -275,6 +275,8 @@ class Session:
 
 
 def bev_figure(s: Session, col: str, index: int, stretch_lateral: bool, shown_cameras: list[str]):
+    """Bird's-eye plot with a FIXED trace structure (same traces, order and names on every instant), so
+    Plotly.react updates the data in place rather than clearing and rebuilding the plot."""
     import plotly.graph_objects as go
 
     t0 = s.t0s[index]
@@ -282,11 +284,9 @@ def bev_figure(s: Session, col: str, index: int, stretch_lateral: bool, shown_ca
     ref = s.columns[s.reference].get(t0)
     hist = s.history(t0)
     fig = go.Figure()
-    # Camera FOV wedges around the ego (true geometry when the plot is equal-aspect, the default):
-    # the camera(s) shown in the images above are gold, the other model inputs blue, the unused rear tele dotted grey.
     shown = set(shown_cameras)
     legend_done: set[str] = set()
-    for f in s.frustums:
+    for f in s.frustums:  # constant geometry; only the colour of the shown camera changes
         a = np.linspace(f["yaw"] - f["fov"] / 2, f["yaw"] + f["fov"] / 2, 14)
         xs = [f["y"]] + [f["y"] + f["length"] * math.sin(v) for v in a] + [f["y"]]
         ys = [f["x"]] + [f["x"] + f["length"] * math.cos(v) for v in a] + [f["x"]]
@@ -301,33 +301,34 @@ def bev_figure(s: Session, col: str, index: int, stretch_lateral: bool, shown_ca
                                  showlegend=kind not in legend_done, legendgroup=kind,
                                  hovertemplate=f"{label}{'' if f['used'] else ' (not used)'}<extra></extra>"))
         legend_done.add(kind)
+    tv = np.arange(1, NUM_FUTURE_STEPS + 1) * 0.1
+    empty = np.zeros((0, 3))
     fig.add_trace(go.Scatter(x=hist[:, 1], y=hist[:, 0], mode="lines", line=dict(color="#1f77b4", width=4), name="ego history (1.5 s)",
                              hovertemplate="history t=%{customdata:.1f}s<br>x=%{y:.1f} y=%{x:.1f}<extra></extra>", customdata=np.arange(-15, 1) * 0.1))
-    tv = np.arange(1, NUM_FUTURE_STEPS + 1) * 0.1
-    if col != s.reference and ref is not None and ref.get("pred_xyz") is not None:
-        p = ref["pred_xyz"][0]
-        fig.add_trace(go.Scatter(x=p[:, 1], y=p[:, 0], mode="lines", line=dict(color=s.colors[s.reference], width=2), opacity=0.45,
-                                 name=f"{s.reference} prediction", customdata=tv, hovertemplate="ref t=+%{customdata:.1f}s<br>x=%{y:.1f} y=%{x:.1f}<extra></extra>"))
-    if rec is not None and rec.get("pred_xyz") is not None:
-        for k, p in enumerate(rec["pred_xyz"]):
-            fig.add_trace(go.Scatter(x=p[:, 1], y=p[:, 0], mode="lines", line=dict(color=s.colors[col], width=4), name=f"{col} prediction (6.4 s)",
-                                     showlegend=k == 0, customdata=tv, hovertemplate=f"{col} t=+%{{customdata:.1f}}s<br>x=%{{y:.1f}} y=%{{x:.1f}}<extra></extra>"))
+    p_ref = ref["pred_xyz"][0] if (col != s.reference and ref is not None and ref.get("pred_xyz") is not None) else empty
+    fig.add_trace(go.Scatter(x=p_ref[:, 1], y=p_ref[:, 0], mode="lines", line=dict(color=s.colors[s.reference], width=2), opacity=0.45,
+                             name=f"{s.reference} prediction", showlegend=col != s.reference, customdata=tv[: len(p_ref)],
+                             hovertemplate="ref t=+%{customdata:.1f}s<br>x=%{y:.1f} y=%{x:.1f}<extra></extra>"))
+    p_own = rec["pred_xyz"][0] if (rec is not None and rec.get("pred_xyz") is not None) else empty
+    fig.add_trace(go.Scatter(x=p_own[:, 1], y=p_own[:, 0], mode="lines", line=dict(color=s.colors[col], width=4), name=f"{col} prediction (6.4 s)",
+                             customdata=tv[: len(p_own)], hovertemplate=f"{col} t=+%{{customdata:.1f}}s<br>x=%{{y:.1f}} y=%{{x:.1f}}<extra></extra>"))
     gt, truncated = s.partial_gt(t0)
-    if gt is not None:
-        label = f"recorded future (ends at +{len(gt) / 10:.1f} s)" if truncated else "recorded future (6.4 s)"
-        fig.add_trace(go.Scatter(x=gt[:, 1], y=gt[:, 0], mode="lines", line=dict(color="black", width=2, dash="dash"), name=label,
-                                 customdata=tv[: len(gt)], hovertemplate="recorded t=+%{customdata:.1f}s<br>x=%{y:.1f} y=%{x:.1f}<extra></extra>"))
-        fig.add_trace(go.Scatter(x=[gt[-1, 1]], y=[gt[-1, 0]], mode="markers", marker=dict(symbol="x", color="black", size=9), showlegend=False, hoverinfo="skip"))
+    g = gt if gt is not None else empty
+    fig.add_trace(go.Scatter(x=g[:, 1], y=g[:, 0], mode="lines", line=dict(color="black", width=2, dash="dash"), name="recorded future",
+                             customdata=tv[: len(g)], hovertemplate="recorded t=+%{customdata:.1f}s<br>x=%{y:.1f} y=%{x:.1f}<extra></extra>"))
+    fig.add_trace(go.Scatter(x=[g[-1, 1]] if len(g) else [], y=[g[-1, 0]] if len(g) else [], mode="markers",
+                             marker=dict(symbol="x", color="black", size=9), showlegend=False, hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=[0], y=[0], mode="markers", marker=dict(color="#ff7f0e", size=8), name="ego at t0", hoverinfo="skip"))
     # Fixed ranges and a fixed height, always. Equal aspect is enforced with constrain="domain", which
     # letterboxes the drawing area instead of changing the ranges: with the default (range-changing)
     # behaviour every responsive resize re-derived the ranges and the whole card reflowed on each step.
     lat = 12.0 if stretch_lateral else 25.0
     aspect = {} if stretch_lateral else {"scaleanchor": "x", "scaleratio": 1, "constrain": "domain"}
     fig.update_layout(
-        autosize=True, height=480, margin=dict(l=50, r=10, t=10, b=40), legend=dict(x=0.01, y=0.99, font=dict(size=10), bgcolor="rgba(255,255,255,0.8)"),
-        xaxis=dict(title="left  <-  lateral y (m)  ->  right" + ("  (stretched)" if stretch_lateral else ""), range=[lat, -lat], zeroline=True, constrain="domain", fixedrange=False),
+        autosize=True, height=BEV_H, margin=dict(l=50, r=10, t=10, b=40), legend=dict(x=0.99, y=0.99, xanchor="right", font=dict(size=10), bgcolor="rgba(255,255,255,0.8)"),
+        xaxis=dict(title="left  <-  lateral y (m)  ->  right" + ("  (stretched)" if stretch_lateral else ""), range=[lat, -lat], zeroline=True, constrain="domain"),
         yaxis=dict(title="forward (m)", range=list(s.forward_range), **aspect),
-        paper_bgcolor="white", plot_bgcolor="white",
+        paper_bgcolor="white", plot_bgcolor="white", uirevision="keep", transition=dict(duration=0),
     )
     fig.update_xaxes(gridcolor="#eee"); fig.update_yaxes(gridcolor="#eee")
     return fig
@@ -349,12 +350,14 @@ def card_timeline_figure(s: Session, col: str, index: int):
                                  name=f"vs {s.reference}", hovertemplate=f"vs {s.reference} %{{y:.2f}} m<extra></extra>"))
         title = f"{col} vs {s.reference}: median {np.nanmedian(s.paired[col]):.2f} m, p90 {np.nanpercentile(s.paired[col], 90):.2f} m"
     fig.add_vline(x=float(s.times[index]), line=dict(color="#d62728", width=2))
-    fig.update_layout(height=190, margin=dict(l=40, r=8, t=26, b=30), title=dict(text=title, font=dict(size=11), x=0.02, y=0.97),
+    fig.update_layout(height=TL_H, margin=dict(l=40, r=8, t=26, b=30), title=dict(text=title, font=dict(size=11), x=0.02, y=0.97),
                       showlegend=False, xaxis=dict(title=None, gridcolor="#eee"), yaxis=dict(title="ADE (m)", range=[0, s.error_y_max], gridcolor="#eee"),
                       paper_bgcolor="white", plot_bgcolor="white", clickmode="event", hovermode="x unified")
     return fig
 
 
+BEV_H = 480
+TL_H = 190
 MAX_SLOTS = 6  # image slots per card (the "all six used" camera set)
 
 
@@ -389,10 +392,10 @@ def build_app(s: Session):
             html.Div(style={"display": "flex", "flexWrap": "wrap"}, children=[
                 html.Img(id={"type": "img", "col": col, "slot": k}, src="", style=hidden) for k in range(MAX_SLOTS)
             ]),
-            dcc.Graph(id={"type": "bev", "col": col}, figure={}, config={"displayModeBar": False, "responsive": True}, style={"width": "100%"}),
+            dcc.Graph(id={"type": "bev", "col": col}, figure={}, config={"displayModeBar": False, "responsive": True}, style={"width": "100%", "height": f"{BEV_H}px"}),
             html.Div(id={"type": "txt", "col": col}, children="", style={"margin": "4px 8px", "padding": "6px", "background": "white", "border": "1px solid #999", "minHeight": "40px"}),
             html.Div(id={"type": "met", "col": col}, children="", style={"margin": "2px 8px 6px", "fontSize": "13px", "color": "#333"}),
-            dcc.Graph(id={"type": "tl", "col": col}, figure={}, config={"displayModeBar": False, "responsive": True}, style={"width": "100%"}),
+            dcc.Graph(id={"type": "tl", "col": col}, figure={}, config={"displayModeBar": False, "responsive": True}, style={"width": "100%", "height": f"{TL_H}px"}),
             # hidden prefetch of the next instant's images, so stepping forward is instant
             html.Div(style=hidden, children=[html.Img(id={"type": "pre", "col": col, "slot": k}, src="") for k in range(MAX_SLOTS)]),
         ])

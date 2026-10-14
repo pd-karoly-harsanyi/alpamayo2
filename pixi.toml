@@ -44,6 +44,10 @@ dash = ">=2.17"
 plotly = ">=5.20"
 pandas = "*"
 
+# Headless browser for dashboard layout tests (PyPI package; conda-forge's "playwright" is the Node CLI).
+[feature.dev.pypi-dependencies]
+playwright = ">=1.40"
+
 [environments]
 default = { solve-group = "default" }
 launch = { features = ["launch"], solve-group = "default" }
