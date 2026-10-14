@@ -176,18 +176,28 @@ class Session:
         self.gt_ade: dict[str, np.ndarray] = {}
         self.end_dist: dict[str, np.ndarray] = {}
         self.text_differs: dict[str, np.ndarray] = {}
+        self.gt_ade_partial: dict[str, np.ndarray] = {}  # ADE over the available horizon where the full 6.4 s is missing
+        self.gt_horizon_s = np.array([0.0] * len(self.t0s))
+        partial_gts = {}
+        for i, t0 in enumerate(self.t0s):
+            g, truncated = self.partial_gt(t0)
+            partial_gts[t0] = g if (g is not None and truncated and len(g) >= 10) else None  # at least 1 s
+            self.gt_horizon_s[i] = (len(g) / 10.0) if g is not None else 0.0
         for col, recs in self.columns.items():
-            paired, gt, end, diff = [], [], [], []
+            paired, gt, gtp, end, diff = [], [], [], [], []
             for t0 in self.t0s:
                 rec, r = recs.get(t0), ref.get(t0)
                 ok = rec is not None and rec.get("pred_xyz") is not None
                 okr = ok and r is not None and r.get("pred_xyz") is not None
                 paired.append(float(np.linalg.norm(rec["pred_xyz"][0, :, :2] - r["pred_xyz"][0, :, :2], axis=-1).mean()) if okr else np.nan)
                 gt.append(float(rec["min_ade_vs_gt_m"]) if ok and rec.get("min_ade_vs_gt_m") is not None else np.nan)
+                g = partial_gts[t0]
+                gtp.append(float(np.linalg.norm(rec["pred_xyz"][0, : len(g), :2] - g[:, :2], axis=-1).mean()) if (ok and g is not None and rec.get("min_ade_vs_gt_m") is None) else np.nan)
                 end.append(float(np.linalg.norm(rec["pred_xyz"][0, -1, :2])) if ok else np.nan)
                 diff.append(float(_cot_text(rec) != _cot_text(r)) if (rec and r) else np.nan)
             self.paired[col] = np.array(paired)
             self.gt_ade[col] = np.array(gt)
+            self.gt_ade_partial[col] = np.array(gtp)
             self.end_dist[col] = np.array(end)
             self.text_differs[col] = np.array(diff)
         x_all = [0.0, 15.0]
@@ -339,13 +349,20 @@ def card_timeline_figure(s: Session, col: str, index: int):
     import plotly.graph_objects as go
 
     fig = go.Figure()
+    hz = s.gt_horizon_s
     if col == s.reference:
         fig.add_trace(go.Scatter(x=s.times, y=s.gt_ade[col], mode="lines+markers", marker=dict(size=3), line=dict(color="black", width=1.5),
-                                 name="vs recorded future", hovertemplate="vs recorded future %{y:.2f} m<extra></extra>"))
-        title = f"{col} vs recorded future: median {np.nanmedian(s.gt_ade[col]):.2f} m"
+                                 name="vs recorded future", hovertemplate="vs recorded future (6.4 s) %{y:.2f} m<extra></extra>"))
+        fig.add_trace(go.Scatter(x=s.times, y=s.gt_ade_partial[col], mode="lines+markers", marker=dict(size=3), line=dict(color="#777777", width=1.5, dash="dot"),
+                                 name="vs recorded future, partial horizon", customdata=hz,
+                                 hovertemplate="vs recorded future, first %{customdata:.1f} s only: %{y:.2f} m<extra></extra>"))
+        title = f"{col} vs recorded future: median {np.nanmedian(s.gt_ade[col]):.2f} m (dotted grey: pose log ends, partial horizon)"
     else:
         fig.add_trace(go.Scatter(x=s.times, y=s.gt_ade[s.reference], mode="lines", line=dict(color="black", width=1, dash="dot"),
                                  name=f"{s.reference} vs recorded future", hovertemplate="ref vs recorded future %{y:.2f} m<extra></extra>"))
+        fig.add_trace(go.Scatter(x=s.times, y=s.gt_ade_partial[s.reference], mode="lines", line=dict(color="#aaaaaa", width=1, dash="dot"),
+                                 name=f"{s.reference} vs recorded future, partial", customdata=hz,
+                                 hovertemplate="ref vs recorded future, first %{customdata:.1f} s only: %{y:.2f} m<extra></extra>"))
         fig.add_trace(go.Scatter(x=s.times, y=s.paired[col], mode="lines+markers", marker=dict(size=3), line=dict(color=s.colors[col], width=2),
                                  name=f"vs {s.reference}", hovertemplate=f"vs {s.reference} %{{y:.2f}} m<extra></extra>"))
         title = f"{col} vs {s.reference}: median {np.nanmedian(s.paired[col]):.2f} m, p90 {np.nanpercentile(s.paired[col], 90):.2f} m"
@@ -489,6 +506,10 @@ def build_app(s: Session):
             metrics = []
             if rec and rec.get("min_ade_vs_gt_m") is not None:
                 metrics.append(f"ADE vs recorded future {rec['min_ade_vs_gt_m']:.2f} m")
+            elif np.isfinite(s.gt_ade_partial[col][idx]):
+                metrics.append(f"ADE vs recorded future, first {s.gt_horizon_s[idx]:.1f} s only: {s.gt_ade_partial[col][idx]:.2f} m")
+            elif rec:
+                metrics.append("no recorded future left (pose log ends)")
             if col != s.reference and np.isfinite(s.paired[col][idx]):
                 metrics.append(f"vs {s.reference} {s.paired[col][idx]:.2f} m")
             if np.isfinite(s.end_dist[col][idx]):
