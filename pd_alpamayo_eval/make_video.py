@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,7 +33,8 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from pd_alpamayo_eval.export_common import MANIFEST_NAME, read_manifest  # noqa: E402
+from pd_alpamayo_eval.export_common import MANIFEST_NAME, NUM_FUTURE_STEPS, STEP_NS, read_manifest  # noqa: E402
+from pd_alpamayo_eval.load_export import EgoTrajectory  # noqa: E402
 from pd_alpamayo_eval.s3util import NEBIUS_BUCKET, client, download_prefix, is_s3, parse_s3  # noqa: E402
 
 ARM_COLORS = {"real": "#2ca02c", "rendered": "#ff7f0e"}
@@ -50,7 +53,10 @@ IMG_H = 360
 BEV_H = 400
 TEXT_H = 110
 HEADER_H = 70
+TIMELINE_H = 230
 PAD = 8
+FRUSTUM_LENGTH_M = {30: 9.0, 70: 6.0, 120: 5.0}  # by horizontal FOV; drawn at the ego on the BEV
+_FOV_RE = re.compile(r"(\d+)fov")
 
 
 def _stage(uri_or_dir: str, cache: Path, skip_suffixes=(".png",)) -> Path:
@@ -124,19 +130,106 @@ def _bev_limits(records: dict, manifest: dict) -> tuple[float, float, float]:
     return min(xs) - 2, max(xs) + 2, max(ys) + 2
 
 
-def _render_bev(rec: dict | None, ref: dict | None, history_xyz: np.ndarray, color: str, limits, arm: str) -> np.ndarray:
+def _camera_frustums(manifest: dict) -> list[dict]:
+    """Per camera: position and yaw in the ego frame, horizontal FOV, and whether the trajectory task uses it."""
+    from scipy.spatial.transform import Rotation
+
+    try:
+        from alpamayo2_super.input_profiles import TASK_INPUT_PROFILES
+
+        used = set(TASK_INPUT_PROFILES["trajectory"].camera_names)
+    except Exception:  # pragma: no cover - src not on the path
+        used = {c for c in CAMERA_LABELS if c != "camera_rear_tele_30fov"}
+    frustums = []
+    for name, cal in (manifest.get("cameras") or {}).items():
+        pose = cal.get("cam_to_ego")
+        if not pose:
+            continue
+        rot = Rotation.from_quat([pose["qx"], pose["qy"], pose["qz"], pose["qw"]]).as_matrix()
+        optical_axis = rot[:, 2]  # camera z (RDF forward) expressed in the ego frame (FLU)
+        m = _FOV_RE.search(name)
+        fov = int(m.group(1)) if m else 90
+        frustums.append(
+            {
+                "name": name,
+                "used": name in used,
+                "x": float(pose["x"]),
+                "y": float(pose["y"]),
+                "yaw": math.atan2(optical_axis[1], optical_axis[0]),
+                "fov": math.radians(fov),
+                "length": FRUSTUM_LENGTH_M.get(fov, 6.0),
+            }
+        )
+    return frustums
+
+
+def _partial_gt(trajectory, t0_ns: int) -> tuple[np.ndarray | None, bool]:
+    """Recorded future in the ego frame at t0, as far as the pose log reaches; (None, False) if nothing."""
+    future_ts = t0_ns + np.arange(1, NUM_FUTURE_STEPS + 1, dtype=np.int64) * STEP_NS
+    future_ts = future_ts[future_ts <= trajectory.ts[-1]]
+    if future_ts.size == 0:
+        return None, False
+    (t0_xyz,), t0_rot = trajectory.sample(np.array([t0_ns], dtype=np.int64))
+    xyz, _ = trajectory.sample(future_ts)
+    local = t0_rot[0].inv().apply(xyz - t0_xyz)
+    return local, future_ts.size < NUM_FUTURE_STEPS
+
+
+def _draw_ego(ax) -> None:
+    from matplotlib.patches import Polygon
+
+    # Ego footprint, ~4.5 x 2 m, drawn in plot coords (horizontal = y, vertical = x).
+    ax.add_patch(Polygon([(1.0, -1.0), (-1.0, -1.0), (-1.0, 3.5), (1.0, 3.5)], closed=True, facecolor="#ff7f0e", alpha=0.45, edgecolor="#ff7f0e"))
+
+
+def _draw_frustum_inset(ax, frustums: list[dict]) -> None:
+    """Equal-aspect inset with the ego and the camera FOV wedges; the main plot is lateral-stretched."""
+    from matplotlib.patches import Polygon
+
+    ins = ax.inset_axes([0.70, 0.03, 0.28, 0.36])
+    _draw_ego(ins)
+    for f in frustums:
+        angles = np.linspace(f["yaw"] - f["fov"] / 2, f["yaw"] + f["fov"] / 2, 12)
+        pts = [(f["y"], f["x"])] + [(f["y"] + f["length"] * math.sin(a), f["x"] + f["length"] * math.cos(a)) for a in angles]
+        if f["used"]:
+            ins.add_patch(Polygon(pts, closed=True, facecolor="#1f77b4", alpha=0.14, edgecolor="#1f77b4", lw=0.8))
+        else:
+            ins.add_patch(Polygon(pts, closed=True, facecolor="none", edgecolor="#999999", lw=0.8, ls=(0, (2, 2))))
+    r = 11.0
+    ins.set_xlim(r, -r)
+    ins.set_ylim(-r, r)
+    ins.set_aspect("equal")
+    ins.set_xticks([])
+    ins.set_yticks([])
+    n_used = sum(f["used"] for f in frustums)
+    ins.set_title(f"model input: {n_used} camera FOVs", fontsize=7, pad=2)
+    ins.patch.set_alpha(0.85)
+
+
+def _render_bev(
+    rec: dict | None,
+    ref: dict | None,
+    history_xyz: np.ndarray,
+    color: str,
+    limits,
+    arm: str,
+    gt_partial: tuple[np.ndarray | None, bool] = (None, False),
+    frustums: list[dict] | None = None,
+) -> np.ndarray:
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
 
     x_min, x_max, y_abs = limits
-    # Lateral range: the data's, but at least +-8 m so the plot has width. Not equal-aspect: with a
-    # 60 m forward range an equal-aspect strip would be unreadable; lateral is exaggerated and labelled.
-    y_abs = max(y_abs, 8.0)
+    # Lateral range: the data's, but at least +-10 m so the frustums and the plot have width. Not
+    # equal-aspect: with a 60 m forward range an equal-aspect strip would be unreadable.
+    y_abs = max(y_abs, 10.0)
     fig, ax = plt.subplots(figsize=(TILE_W / 100, BEV_H / 100), dpi=100)
     # Driving direction up. The horizontal axis is y (positive = left in FLU) with the axis
     # inverted, so the left of the car is on the left of the plot.
+    _draw_ego(ax)
     ax.plot(history_xyz[:, 1], history_xyz[:, 0], color="#1f77b4", lw=3, label="ego history (1.5 s)")
     if ref is not None and arm != "real" and ref.get("pred_xyz") is not None:
         for traj in ref["pred_xyz"]:
@@ -144,11 +237,14 @@ def _render_bev(rec: dict | None, ref: dict | None, history_xyz: np.ndarray, col
     if rec is not None and rec.get("pred_xyz") is not None:
         for traj in rec["pred_xyz"]:
             ax.plot(traj[:, 1], traj[:, 0], color=color, lw=3, label=f"{arm} prediction (6.4 s)")
-    if rec is not None and rec.get("gt_xyz") is not None:  # drawn last so it stays visible on top
-        gt = rec["gt_xyz"]
-        ax.plot(gt[:, 1], gt[:, 0], color="black", lw=1.8, ls=(0, (4, 3)), label="recorded future")
+    gt, truncated = gt_partial
+    if gt is None and rec is not None and rec.get("gt_xyz") is not None:
+        gt, truncated = rec["gt_xyz"], False
+    if gt is not None:  # drawn last so it stays visible on top
+        label = f"recorded future (ends at +{len(gt) / 10:.1f} s)" if truncated else "recorded future (6.4 s)"
+        ax.plot(gt[:, 1], gt[:, 0], color="black", lw=1.8, ls=(0, (4, 3)), label=label)
         ax.plot(gt[-1, 1], gt[-1, 0], "x", color="black", ms=7)
-    ax.plot(0, 0, "o", color="#ff7f0e", ms=8, label="ego at t0")
+    ax.plot(0, 0, "o", color="#ff7f0e", ms=6, label="ego at t0")
     ax.set_xlim(y_abs, -y_abs)
     ax.set_ylim(x_min, x_max)
     ax.set_xlabel("left <-   lateral y (m), stretched   -> right")
@@ -158,12 +254,71 @@ def _render_bev(rec: dict | None, ref: dict | None, history_xyz: np.ndarray, col
     seen: dict[str, object] = {}
     for h, l in zip(handles, labels):
         seen.setdefault(l, h)
+    if frustums:
+        seen["camera FOV used (inset)"] = Patch(facecolor="#1f77b4", alpha=0.25, edgecolor="#1f77b4")
+        if any(not f["used"] for f in frustums):
+            seen["camera not used: rear tele"] = Patch(facecolor="none", edgecolor="#999999", ls=(0, (2, 2)))
     ax.legend(seen.values(), seen.keys(), loc="upper left", fontsize=7, framealpha=0.85)
+    if frustums:
+        _draw_frustum_inset(ax, frustums)
     fig.tight_layout(pad=0.3)
     fig.canvas.draw()
     rgba = np.asarray(fig.canvas.buffer_rgba())
     plt.close(fig)
     return rgba[..., :3].copy()
+
+
+def _paired_ade(a: np.ndarray, b: np.ndarray) -> float:
+    return float(np.linalg.norm(a[0, :, :2] - b[0, :, :2], axis=-1).mean())
+
+
+def _error_series(records: dict, instants: list[dict], arms: list[str]) -> dict[str, np.ndarray]:
+    """Per instant: paired ADE vs real for each non-real arm, and the real arm's ADE vs GT (nan when missing)."""
+    series: dict[str, list[float]] = {a: [] for a in arms if a != "real"}
+    series["real vs recorded future"] = []
+    for inst in instants:
+        t0 = int(inst["t0_ns"])
+        ref = records.get((t0, "real"))
+        for a in arms:
+            if a == "real":
+                continue
+            rec = records.get((t0, a))
+            ok = ref is not None and rec is not None and ref.get("pred_xyz") is not None and rec.get("pred_xyz") is not None
+            series[a].append(_paired_ade(rec["pred_xyz"], ref["pred_xyz"]) if ok else np.nan)
+        gt = ref.get("min_ade_vs_gt_m") if ref else None
+        series["real vs recorded future"].append(float(gt) if gt is not None else np.nan)
+    return {k: np.asarray(v, dtype=float) for k, v in series.items()}
+
+
+def _render_timeline(times_s: np.ndarray, series: dict[str, np.ndarray], colors: dict[str, str], width: int) -> tuple[np.ndarray, np.ndarray]:
+    """Base image of the error-over-time strip and the pixel x of every instant (for the cursor)."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(width / 100, TIMELINE_H / 100), dpi=100)
+    y_max = 0.5
+    for name, values in series.items():
+        if name == "real vs recorded future":
+            ax.plot(times_s, values, color="black", lw=1.2, ls=":", label=f"{name} (median {np.nanmedian(values):.2f} m)")
+        else:
+            ax.plot(times_s, values, color=colors.get(name, "#7f7f7f"), lw=1.8, label=f"{name} vs real (median {np.nanmedian(values):.2f} m)")
+        if np.isfinite(values).any():
+            y_max = max(y_max, float(np.nanpercentile(values, 98)))
+    ax.set_xlim(float(times_s[0]), float(times_s[-1]) if times_s[-1] > times_s[0] else float(times_s[0]) + 1)
+    ax.set_ylim(0, y_max * 1.1)
+    ax.set_xlabel("time in scene (s)")
+    ax.set_ylabel("ADE (m)")
+    ax.grid(alpha=0.3)
+    ax.legend(loc="upper left", fontsize=7, ncol=2, framealpha=0.85)
+    ax.set_title("trajectory error per instant (paired ADE of each arm against the real arm; dotted: real arm against the recorded future)", fontsize=8)
+    fig.tight_layout(pad=0.4)
+    fig.canvas.draw()
+    xs = np.array([ax.transData.transform((t, 0.0))[0] for t in times_s])
+    rgba = np.asarray(fig.canvas.buffer_rgba())
+    plt.close(fig)
+    return rgba[..., :3].copy(), xs
 
 
 def _cot_text(rec: dict | None) -> str:
@@ -207,6 +362,8 @@ def _tile(
     cameras: list[str],
     font,
     font_small,
+    gt_partial: tuple[np.ndarray | None, bool] = (None, False),
+    frustums: list[dict] | None = None,
 ):
     from PIL import Image, ImageDraw
 
@@ -228,7 +385,7 @@ def _tile(
         draw.rectangle([0, y, 150, y + 22], fill=(0, 0, 0))
         draw.text((6, y + 3), f"{arm} | {CAMERA_LABELS.get(camera, camera)}", fill="white", font=font_small)
         y += IMG_H
-    bev = _render_bev(rec if available else None, ref, history_xyz, color, limits, arm)
+    bev = _render_bev(rec if available else None, ref, history_xyz, color, limits, arm, gt_partial, frustums)
     tile.paste(Image.fromarray(bev).resize((TILE_W, BEV_H)), (0, y))
     y += BEV_H
     text = _cot_text(rec) if rec else ("(no output)" if available else "")
@@ -266,23 +423,48 @@ def make_frames(run_dir: Path, export_dir: Path, out_frames: Path, columns: int,
     rows = (len(arms) + columns - 1) // columns
     tile_h = IMG_H * len(cameras) + BEV_H + TEXT_H
     W = columns * TILE_W + (columns + 1) * PAD
-    H = HEADER_H + rows * tile_h + (rows + 1) * PAD
+    H = HEADER_H + rows * tile_h + (rows + 1) * PAD + TIMELINE_H + PAD
     t_first = int(manifest["instants"][0]["t0_ns"])
+    times_s = np.array([(int(inst["t0_ns"]) - t_first) / 1e9 for inst in instants])
+    frustums = _camera_frustums(manifest)
+    trajectory = EgoTrajectory(manifest)
+    series = _error_series(records, instants, arms)
+    timeline, cursor_xs = _render_timeline(times_s, series, colors, W - 2 * PAD)
+    timeline_img = Image.fromarray(timeline)
+    timeline_y = HEADER_H + rows * tile_h + (rows + 1) * PAD
     out_frames.mkdir(parents=True, exist_ok=True)
     for i, instant in enumerate(instants):
         t0 = int(instant["t0_ns"])
         history = _history_from_export(export_dir, t0)
+        gt_partial = _partial_gt(trajectory, t0)
         ref = records.get((t0, "real"))
         canvas = Image.new("RGB", (W, H), "#202020")
         draw = ImageDraw.Draw(canvas)
-        head = f"{manifest['scene']}   instant {i + 1}/{len(instants)}   t = +{(t0 - t_first) / 1e9:.1f} s   run {summary.get('run_id', '')}"
+        head = f"{manifest['scene']}   instant {i + 1}/{len(instants)}   t = +{times_s[i]:.1f} s   run {summary.get('run_id', '')}"
         draw.text((PAD + 4, 10), head, fill="white", font=font)
-        ades = [f"{a}: {records[(t0, a)]['min_ade_vs_gt_m']:.2f} m" for a in arms if (t0, a) in records and records[(t0, a)].get("min_ade_vs_gt_m") is not None]
-        draw.text((PAD + 4, 40), "minADE vs GT  " + "   ".join(ades), fill="#cccccc", font=font_small)
+        parts = []
+        for a in arms:
+            rec = records.get((t0, a))
+            if a == "real":
+                gt = rec.get("min_ade_vs_gt_m") if rec else None
+                parts.append(f"real vs GT {gt:.2f} m" if gt is not None else "real vs GT n/a")
+            elif not np.isnan(series[a][i]):
+                parts.append(f"{a} vs real {series[a][i]:.2f} m")
+        draw.text((PAD + 4, 40), "this instant:  " + "   ".join(parts), fill="#cccccc", font=font_small)
         for j, arm in enumerate(arms):
             r, c = divmod(j, columns)
-            tile = _tile(export_dir, instant, arm, records.get((t0, arm)), ref, history, colors[arm], limits, cameras, font, font_small)
+            tile = _tile(
+                export_dir, instant, arm, records.get((t0, arm)), ref, history, colors[arm], limits, cameras, font, font_small,
+                gt_partial=gt_partial, frustums=frustums,
+            )
             canvas.paste(tile, (PAD + c * (TILE_W + PAD), HEADER_H + PAD + r * (tile_h + PAD)))
+        # Error-over-time strip with a cursor at this instant and the running mean so far.
+        canvas.paste(timeline_img, (PAD, timeline_y))
+        cx = int(PAD + cursor_xs[i])
+        draw.line([(cx, timeline_y + 22), (cx, timeline_y + TIMELINE_H - 30)], fill="#d62728", width=2)
+        means = [f"{a} {np.nanmean(series[a][: i + 1]):.2f} m" for a in arms if a != "real" and np.isfinite(series[a][: i + 1]).any()]
+        mean_text = "mean so far vs real:  " + "   ".join(means)
+        draw.text((W - PAD - 14 - draw.textlength(mean_text, font=font_small), timeline_y + 24), mean_text, fill="#333333", font=font_small)
         canvas.save(out_frames / f"frame_{i:04d}.png")
         if (i + 1) % 10 == 0 or i + 1 == len(instants):
             print(f"  frames {i + 1}/{len(instants)}")
