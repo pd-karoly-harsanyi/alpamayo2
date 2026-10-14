@@ -368,7 +368,11 @@ def build_app(s: Session):
 
     app = dash.Dash(__name__, title=f"alpamayo eval: {s.export_name}")
 
-    @app.server.route("/img/<col>/<camera>/<int:index>")
+    # The export and run names are part of the URL so the browser cache can never hand a thumbnail
+    # of one scene (or run) to a page showing another.
+    img_prefix = f"/img/{s.export_name}/{'-'.join(sorted(set(s.run_of.values())))}"
+
+    @app.server.route(f"{img_prefix}/<col>/<camera>/<int:index>")
     def _img(col, camera, index):
         from flask import request
 
@@ -458,9 +462,9 @@ def build_app(s: Session):
             card_styles.append({"minWidth": 0, "border": "1px solid #ddd", "background": "#fafafa"} if on else hidden)
             for k in range(MAX_SLOTS):
                 show = on and k < len(cameras) and rec is not None
-                srcs.append(f"/img/{col}/{cameras[k]}/{idx}{q}" if show else dash.no_update)
+                srcs.append(f"{img_prefix}/{col}/{cameras[k]}/{idx}{q}" if show else dash.no_update)
                 img_styles.append(img_style if show else hidden)
-                pre_srcs.append(f"/img/{col}/{cameras[k]}/{nxt}{q}" if show else dash.no_update)
+                pre_srcs.append(f"{img_prefix}/{col}/{cameras[k]}/{nxt}{q}" if show else dash.no_update)
             if not on:
                 bevs.append(dash.no_update); txts.append(dash.no_update); txt_styles.append(dash.no_update); mets.append(dash.no_update); tls.append(dash.no_update)
                 continue
