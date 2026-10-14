@@ -351,6 +351,9 @@ def card_timeline_figure(s: Session, col: str, index: int):
     return fig
 
 
+MAX_SLOTS = 6  # image slots per card (the "all six used" camera set)
+
+
 def build_app(s: Session):
     import dash
     from dash import ALL, Input, Output, State, ctx, dash_table, dcc, html
@@ -371,6 +374,25 @@ def build_app(s: Session):
     n = len(s.instants)
     marks = {i: f"{s.times[i]:.0f}s" for i in range(0, n, max(1, n // 12))}
     cols = list(s.columns)
+    hidden = {"display": "none"}
+
+    # The cards exist once, for every column, with stable ids; callbacks only change their properties.
+    # That keeps images and plots mounted: a new src shows the old picture until the new one has
+    # decoded, and a new figure redraws in place, so nothing blinks while stepping.
+    def card(col):
+        return html.Div(id={"type": "card", "col": col}, style=hidden, children=[
+            html.Div(f"{col}  ·  {s.run_of[col]}", style={"background": "#222", "color": "white", "padding": "3px 6px", "fontSize": "13px"}),
+            html.Div(style={"display": "flex", "flexWrap": "wrap"}, children=[
+                html.Img(id={"type": "img", "col": col, "slot": k}, src="", style=hidden) for k in range(MAX_SLOTS)
+            ]),
+            dcc.Graph(id={"type": "bev", "col": col}, figure={}, config={"displayModeBar": False, "responsive": True}, style={"width": "100%"}),
+            html.Div(id={"type": "txt", "col": col}, children="", style={"margin": "4px 8px", "padding": "6px", "background": "white", "border": "1px solid #999", "minHeight": "40px"}),
+            html.Div(id={"type": "met", "col": col}, children="", style={"margin": "2px 8px 6px", "fontSize": "13px", "color": "#333"}),
+            dcc.Graph(id={"type": "tl", "col": col}, figure={}, config={"displayModeBar": False, "responsive": True}, style={"width": "100%"}),
+            # hidden prefetch of the next instant's images, so stepping forward is instant
+            html.Div(style=hidden, children=[html.Img(id={"type": "pre", "col": col, "slot": k}, src="") for k in range(MAX_SLOTS)]),
+        ])
+
     app.layout = html.Div(style={"fontFamily": "sans-serif", "margin": "12px"}, children=[
         html.H3(f"{s.manifest['scene']}  ·  export {s.export_name}  ·  runs {', '.join(sorted(set(s.run_of.values())))}", style={"margin": "4px 0"}),
         html.Div(style={"display": "flex", "gap": "18px", "alignItems": "center", "flexWrap": "wrap", "margin": "8px 0"}, children=[
@@ -385,7 +407,8 @@ def build_app(s: Session):
         ]),
         dcc.Slider(id="idx", min=0, max=n - 1, step=1, value=0, marks=marks, tooltip={"placement": "bottom", "always_visible": False}, updatemode="drag"),
         dcc.Interval(id="tick", interval=500, disabled=True),
-        html.Div(id="cards", style={"display": "grid", "gridTemplateColumns": "repeat(4, minmax(0, 1fr))", "gap": "8px", "marginTop": "10px"}),
+        html.Div(id="cards", style={"display": "grid", "gridTemplateColumns": "repeat(4, minmax(0, 1fr))", "gap": "8px", "marginTop": "10px"},
+                 children=[card(col) for col in cols]),
         html.H4("summary over the scene (compare-runs)"),
         dash_table.DataTable(data=s.summary_rows(), columns=[{"name": k, "id": k} for k in s.summary_rows()[0]], style_cell={"fontSize": 13, "padding": "4px"}, style_header={"fontWeight": "bold"}),
     ])
@@ -410,23 +433,36 @@ def build_app(s: Session):
                 return int(np.argmin(np.abs(s.times - click["points"][0]["x"])))
         return idx
 
-    @app.callback(Output("cards", "children"), Output("cards", "style"), Output("where", "children"),
-                  Input("idx", "value"), Input("cols", "value"), Input("cameras", "value"), Input("aspect", "value"), Input("overlay", "value"))
     def _view(idx, selected, camera_set, aspect, overlay):
         t0 = s.t0s[idx]
-        selected = [c for c in cols if c in (selected or [])]
+        selected = set(selected or [])
         cameras = CAMERA_SETS[camera_set]
         ncol = 3 if len(cameras) >= 3 else len(cameras)
-        img_pct = f"{100 / ncol:.3f}%"
+        img_style = {"width": f"{100 / ncol:.3f}%", "display": "block"}
         q = "?overlay=1" if overlay else ""
-        cards = []
         ref = s.columns[s.reference].get(t0)
-        for col in selected:
+        nxt = min(idx + 1, n - 1)
+        card_styles, srcs, img_styles, pre_srcs, bevs, txts, txt_styles, mets, tls = [], [], [], [], [], [], [], [], []
+        for col in cols:  # output lists follow the layout order: columns in order, slots 0..MAX_SLOTS-1
+            on = col in selected
             rec = s.columns[col].get(t0)
-            available = rec is not None
-            imgs = [html.Img(src=f"/img/{col}/{cam}/{idx}{q}", style={"width": img_pct, "display": "block"}, title=CAMERA_LABELS.get(cam, cam)) for cam in cameras] if available else [html.Div("not available for this instant", style={"width": "100%", "height": "120px", "background": "#ccc"})]
+            card_styles.append({"minWidth": 0, "border": "1px solid #ddd", "background": "#fafafa"} if on else hidden)
+            for k in range(MAX_SLOTS):
+                show = on and k < len(cameras) and rec is not None
+                srcs.append(f"/img/{col}/{cameras[k]}/{idx}{q}" if show else dash.no_update)
+                img_styles.append(img_style if show else hidden)
+                pre_srcs.append(f"/img/{col}/{cameras[k]}/{nxt}{q}" if show else dash.no_update)
+            if not on:
+                bevs.append(dash.no_update); txts.append(dash.no_update); txt_styles.append(dash.no_update); mets.append(dash.no_update); tls.append(dash.no_update)
+                continue
+            fig = bev_figure(s, col, idx, bool(aspect), cameras)
+            fig.update_layout(uirevision="keep")
+            bevs.append(fig)
             text = _cot_text(rec) if rec else ""
             differs = bool(rec and ref and col != s.reference and _cot_text(rec) != _cot_text(ref))
+            txts.append(text or ("(no output)" if rec else "not available for this instant"))
+            txt_styles.append({"margin": "4px 8px", "padding": "6px", "background": "white", "minHeight": "40px",
+                               "border": "3px solid #d62728" if differs else "1px solid #999"})
             metrics = []
             if rec and rec.get("min_ade_vs_gt_m") is not None:
                 metrics.append(f"ADE vs recorded future {rec['min_ade_vs_gt_m']:.2f} m")
@@ -434,17 +470,29 @@ def build_app(s: Session):
                 metrics.append(f"vs {s.reference} {s.paired[col][idx]:.2f} m")
             if np.isfinite(s.end_dist[col][idx]):
                 metrics.append(f"predicted distance {s.end_dist[col][idx]:.1f} m")
-            cards.append(html.Div(style={"minWidth": 0, "border": "1px solid #ddd", "background": "#fafafa"}, children=[
-                html.Div(f"{col}  ·  {s.run_of[col]}", style={"background": "#222", "color": "white", "padding": "3px 6px", "fontSize": "13px"}),
-                html.Div(imgs, style={"display": "flex", "flexWrap": "wrap"}),
-                dcc.Graph(figure=bev_figure(s, col, idx, bool(aspect), cameras), config={"displayModeBar": False, "responsive": True}, style={"width": "100%"}),
-                html.Div(text or "(no output)", style={"margin": "4px 8px", "padding": "6px", "background": "white", "border": f"{'3px solid #d62728' if differs else '1px solid #999'}", "minHeight": "40px"}),
-                html.Div("   ·   ".join(metrics), style={"margin": "2px 8px 6px", "fontSize": "13px", "color": "#333"}),
-                dcc.Graph(id={"type": "tl", "col": col}, figure=card_timeline_figure(s, col, idx), config={"displayModeBar": False, "responsive": True}, style={"width": "100%"}),
-            ]))
-        style = {"display": "grid", "gridTemplateColumns": f"repeat({max(1, len(selected))}, minmax(0, 1fr))", "gap": "8px", "marginTop": "10px"}
+            mets.append("   ·   ".join(metrics))
+            tl = card_timeline_figure(s, col, idx)
+            tl.update_layout(uirevision="keep")
+            tls.append(tl)
+        grid = {"display": "grid", "gridTemplateColumns": f"repeat({max(1, len(selected))}, minmax(0, 1fr))", "gap": "8px", "marginTop": "10px"}
         where = f"instant {idx + 1}/{n}   t = +{s.times[idx]:.1f} s"
-        return cards, style, where
+        return card_styles, srcs, img_styles, pre_srcs, bevs, txts, txt_styles, mets, tls, grid, where
+
+    app.callback(
+        Output({"type": "card", "col": ALL}, "style"),
+        Output({"type": "img", "col": ALL, "slot": ALL}, "src"),
+        Output({"type": "img", "col": ALL, "slot": ALL}, "style"),
+        Output({"type": "pre", "col": ALL, "slot": ALL}, "src"),
+        Output({"type": "bev", "col": ALL}, "figure"),
+        Output({"type": "txt", "col": ALL}, "children"),
+        Output({"type": "txt", "col": ALL}, "style"),
+        Output({"type": "met", "col": ALL}, "children"),
+        Output({"type": "tl", "col": ALL}, "figure"),
+        Output("cards", "style"),
+        Output("where", "children"),
+        Input("idx", "value"), Input("cols", "value"), Input("cameras", "value"), Input("aspect", "value"), Input("overlay", "value"),
+    )(_view)
+    app.view_fn = _view  # the raw function, for tests
 
     return app
 
