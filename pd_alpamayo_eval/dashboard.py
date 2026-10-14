@@ -413,8 +413,10 @@ def build_app(s: Session):
         dcc.Interval(id="tick", interval=500, disabled=True),
         html.Div(id="cards", style={"display": "grid", "gridTemplateColumns": "repeat(4, minmax(0, 1fr))", "gap": "8px", "marginTop": "10px"},
                  children=[card(col) for col in cols]),
-        html.H4("summary over the scene (compare-runs)"),
-        dash_table.DataTable(data=s.summary_rows(), columns=[{"name": k, "id": k} for k in s.summary_rows()[0]], style_cell={"fontSize": 13, "padding": "4px"}, style_header={"fontWeight": "bold"}),
+        html.Details(style={"marginTop": "14px"}, open=False, children=[
+            html.Summary("summary over the scene (compare-runs)", style={"cursor": "pointer", "fontWeight": "bold"}),
+            dash_table.DataTable(data=s.summary_rows(), columns=[{"name": k, "id": k} for k in s.summary_rows()[0]], style_cell={"fontSize": 13, "padding": "4px"}, style_header={"fontWeight": "bold"}),
+        ]),
     ])
 
     @app.callback(Output("tick", "disabled"), Output("play", "children"), Output("tick", "interval"),
