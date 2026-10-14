@@ -443,6 +443,14 @@ def build_app(s: Session):
     # when it changes, so a tab left open across a restart never talks to a server it does not match.
     page_token = f"{s.export_name}|{'-'.join(sorted(set(s.run_of.values())))}|{int(_time.time())}"
 
+    @app.server.after_request
+    def _no_store(resp):  # the page, the layout and the callback registry are never served from the browser cache
+        from flask import request
+
+        if request.path in ("/", "/_dash-layout", "/_dash-dependencies") or request.path.startswith("/_dash-update-component"):
+            resp.headers["Cache-Control"] = "no-store"
+        return resp
+
     @app.server.route("/page-token")
     def _page_token():
         return Response(page_token, mimetype="text/plain", headers={"Cache-Control": "no-store"})
