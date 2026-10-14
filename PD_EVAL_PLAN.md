@@ -132,6 +132,31 @@ and unsets the pod's `HF_TOKEN` at runtime so the file governs. Claude cannot su
 token-bearing job (auto-mode classifier); the user runs it. Inference timing and minADE are still
 to be measured (next run).
 
+## TODO (2026-10-14)
+
+Where things stand: three scenes run end to end (Italy with a seed floor, Madrid, Austria), the
+dashboard and video work, everything generated is listed in `pd_alpamayo_eval/INVENTORY.md`.
+
+1. **Seed floors for Madrid and Austria** (one submit each: `--arms real --seed 1`), then
+   `compare-runs` per scene. Without them the Madrid/Austria paired numbers have no scale.
+2. **Meta-action text metric**: run the model's `meta_action` task (longitudinal / lateral / lane
+   labels) per instant and arm; sentence-level text comparison is pure sampling noise (72 %
+   differs between two seeds of the same images). Needs a small addition to `run_export.py`
+   (`text_tasks.generate_text`).
+3. **Blind test** (brainstorm hard requirement): same ego history, wrong/blank images; the model
+   must change its output materially or it is not measuring the pictures.
+4. **More samples per instant** (`--num-traj-samples 5`): minADE over samples and a per-instant
+   spread, cheaper than many seeds.
+5. **Per-scene gate proposal**: paired-ADE p90 relative to the seed floor, and the signed
+   predicted-distance bias (floor symmetric, renders one-sided). Write it up once 1 is done.
+6. **More scenes**: any bundle with a dynamic splat works with the same three commands (render,
+   export, mirror); candidates in the registry: other PAI-AV scenes with 10 Hz curated bundles.
+7. **Housekeeping**: delete the leftover `tmp_alpamayo_eval/italy_3s/` in artifact `ee58e53a`
+   (duplicate of `w5s_3s`); the `full` export (Italy without variations) is superseded by
+   `full_variations`. Nothing else is redundant.
+8. **Not started**: `nav_text` CFG on the 8-GPU node, companion probes, pdncc step that registers
+   the export as an artifact, NVIDIA outreach status for anything customer-facing.
+
 **Step-by-step recipe for all of this: `pd_alpamayo_eval/HOWTO.md`.**
 
 ## Phase 2 state (2026-10-13): PD data path, no HF dataset needed
