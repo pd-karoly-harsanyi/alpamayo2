@@ -318,11 +318,15 @@ def bev_figure(s: Session, col: str, index: int, stretch_lateral: bool, shown_ca
         fig.add_trace(go.Scatter(x=gt[:, 1], y=gt[:, 0], mode="lines", line=dict(color="black", width=2, dash="dash"), name=label,
                                  customdata=tv[: len(gt)], hovertemplate="recorded t=+%{customdata:.1f}s<br>x=%{y:.1f} y=%{x:.1f}<extra></extra>"))
         fig.add_trace(go.Scatter(x=[gt[-1, 1]], y=[gt[-1, 0]], mode="markers", marker=dict(symbol="x", color="black", size=9), showlegend=False, hoverinfo="skip"))
-    lat = 12.0
+    # Fixed ranges and a fixed height, always. Equal aspect is enforced with constrain="domain", which
+    # letterboxes the drawing area instead of changing the ranges: with the default (range-changing)
+    # behaviour every responsive resize re-derived the ranges and the whole card reflowed on each step.
+    lat = 12.0 if stretch_lateral else 25.0
+    aspect = {} if stretch_lateral else {"scaleanchor": "x", "scaleratio": 1, "constrain": "domain"}
     fig.update_layout(
         autosize=True, height=480, margin=dict(l=50, r=10, t=10, b=40), legend=dict(x=0.01, y=0.99, font=dict(size=10), bgcolor="rgba(255,255,255,0.8)"),
-        xaxis=dict(title="left  <-  lateral y (m)  ->  right" + ("  (stretched)" if stretch_lateral else ""), range=[lat, -lat], zeroline=True),
-        yaxis=dict(title="forward (m)", range=list(s.forward_range), **({} if stretch_lateral else {"scaleanchor": "x", "scaleratio": 1})),
+        xaxis=dict(title="left  <-  lateral y (m)  ->  right" + ("  (stretched)" if stretch_lateral else ""), range=[lat, -lat], zeroline=True, constrain="domain", fixedrange=False),
+        yaxis=dict(title="forward (m)", range=list(s.forward_range), **aspect),
         paper_bgcolor="white", plot_bgcolor="white",
     )
     fig.update_xaxes(gridcolor="#eee"); fig.update_yaxes(gridcolor="#eee")
