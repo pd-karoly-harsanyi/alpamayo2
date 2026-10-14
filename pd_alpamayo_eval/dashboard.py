@@ -437,7 +437,30 @@ def build_app(s: Session):
             html.Div(style=hidden, children=[html.Img(id={"type": "pre", "col": col, "slot": k}, src="") for k in range(MAX_SLOTS)]),
         ])
 
-    page_token = f"{s.export_name}|{'-'.join(sorted(set(s.run_of.values())))}"
+    import time as _time
+
+    # Identifies this server process and its scene. The page polls it (script below) and reloads itself
+    # when it changes, so a tab left open across a restart never talks to a server it does not match.
+    page_token = f"{s.export_name}|{'-'.join(sorted(set(s.run_of.values())))}|{int(_time.time())}"
+
+    @app.server.route("/page-token")
+    def _page_token():
+        return Response(page_token, mimetype="text/plain", headers={"Cache-Control": "no-store"})
+
+    app.index_string = """<!DOCTYPE html>
+<html><head>{%metas%}<title>{%title%}</title>{%favicon%}{%css%}</head>
+<body>{%app_entry%}<footer>{%config%}{%scripts%}{%renderer%}</footer>
+<script>
+(function () {
+  var mine = """ + repr(page_token) + """;
+  var wasDown = false;
+  setInterval(function () {
+    fetch('/page-token', {cache: 'no-store'}).then(function (r) { return r.text(); }).then(function (t) {
+      if (t !== mine || wasDown) { location.reload(); }
+    }).catch(function () { wasDown = true; });
+  }, 3000);
+})();
+</script></body></html>"""
     app.layout = html.Div(style={"fontFamily": "sans-serif", "margin": "12px"}, children=[
         dcc.Store(id="page-token", data=page_token),
         html.Div(id="stale", children="", style={"display": "none"}),
