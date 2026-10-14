@@ -132,6 +132,8 @@ and unsets the pod's `HF_TOKEN` at runtime so the file governs. Claude cannot su
 token-bearing job (auto-mode classifier); the user runs it. Inference timing and minADE are still
 to be measured (next run).
 
+**Step-by-step recipe for all of this: `pd_alpamayo_eval/HOWTO.md`.**
+
 ## Phase 2 state (2026-10-13): PD data path, no HF dataset needed
 
 Decision (user): run on our own frames, never on PhysicalAI-AV via HF. Data moves like pd-fm's:
