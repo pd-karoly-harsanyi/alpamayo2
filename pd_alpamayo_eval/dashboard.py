@@ -516,6 +516,7 @@ def main() -> int:
     import socket
 
     with socket.socket() as sock:  # fail fast, before the minute of loading, with a clear message
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # like Flask: TIME_WAIT leftovers are not "in use"
         try:
             sock.bind((args.host, args.port))
         except OSError:
