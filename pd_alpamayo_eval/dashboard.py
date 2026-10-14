@@ -404,7 +404,10 @@ def build_app(s: Session):
             html.Div(style=hidden, children=[html.Img(id={"type": "pre", "col": col, "slot": k}, src="") for k in range(MAX_SLOTS)]),
         ])
 
+    page_token = f"{s.export_name}|{'-'.join(sorted(set(s.run_of.values())))}"
     app.layout = html.Div(style={"fontFamily": "sans-serif", "margin": "12px"}, children=[
+        dcc.Store(id="page-token", data=page_token),
+        html.Div(id="stale", children="", style={"display": "none"}),
         html.H3(f"{s.manifest['scene']}  ·  export {s.export_name}  ·  runs {', '.join(sorted(set(s.run_of.values())))}", style={"margin": "4px 0"}),
         html.Div(style={"display": "flex", "gap": "18px", "alignItems": "center", "flexWrap": "wrap", "margin": "8px 0"}, children=[
             html.Button("▶ play", id="play", n_clicks=0, style={"width": "90px"}),
@@ -446,7 +449,14 @@ def build_app(s: Session):
                 return int(np.argmin(np.abs(s.times - click["points"][0]["x"])))
         return idx
 
-    def _view(idx, selected, camera_set, aspect, overlay):
+    def _view(idx, selected, camera_set, aspect, overlay, token):
+        if token != page_token:  # a tab left open across a server restart would otherwise show mixed scenes
+            n_out = len(cols) * (1 + 3 * MAX_SLOTS + 5)
+            banner = "THIS TAB IS STALE: the server now serves a different scene or run. Reload the page (Ctrl-Shift-R)."
+            return ([dash.no_update] * len(cols), [dash.no_update] * (len(cols) * MAX_SLOTS), [dash.no_update] * (len(cols) * MAX_SLOTS),
+                    [dash.no_update] * (len(cols) * MAX_SLOTS), [dash.no_update] * len(cols), [dash.no_update] * len(cols), [dash.no_update] * len(cols),
+                    [dash.no_update] * len(cols), [dash.no_update] * len(cols), dash.no_update, banner,
+                    {"display": "block", "background": "#d62728", "color": "white", "padding": "10px", "fontWeight": "bold", "margin": "8px 0"}, banner)
         t0 = s.t0s[idx]
         selected = set(selected or [])
         cameras = CAMERA_SETS[camera_set]
@@ -489,7 +499,7 @@ def build_app(s: Session):
             tls.append(tl)
         grid = {"display": "grid", "gridTemplateColumns": f"repeat({max(1, len(selected))}, minmax(0, 1fr))", "gap": "8px", "marginTop": "10px"}
         where = f"instant {idx + 1}/{n}   t = +{s.times[idx]:.1f} s"
-        return card_styles, srcs, img_styles, pre_srcs, bevs, txts, txt_styles, mets, tls, grid, where
+        return card_styles, srcs, img_styles, pre_srcs, bevs, txts, txt_styles, mets, tls, grid, where, {"display": "none"}, ""
 
     app.callback(
         Output({"type": "card", "col": ALL}, "style"),
@@ -503,7 +513,10 @@ def build_app(s: Session):
         Output({"type": "tl", "col": ALL}, "figure"),
         Output("cards", "style"),
         Output("where", "children"),
+        Output("stale", "style"),
+        Output("stale", "children"),
         Input("idx", "value"), Input("cols", "value"), Input("cameras", "value"), Input("aspect", "value"), Input("overlay", "value"),
+        State("page-token", "data"),
     )(_view)
     app.view_fn = _view  # the raw function, for tests
 
