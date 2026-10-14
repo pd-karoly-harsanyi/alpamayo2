@@ -513,6 +513,16 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--cache", type=Path, default=Path("~/.cache/alpamayo-eval").expanduser())
     args = parser.parse_args()
+    import socket
+
+    with socket.socket() as sock:  # fail fast, before the minute of loading, with a clear message
+        try:
+            sock.bind((args.host, args.port))
+        except OSError:
+            raise SystemExit(
+                f"port {args.port} on {args.host} is already in use, probably another dashboard still running "
+                f"(the browser would keep showing THAT scene). Stop it with Ctrl-C in its terminal, or pass --port {args.port + 1}."
+            )
     session = Session(args.runs, args.cache)
     print(f"loaded {len(session.instants)} instants, columns {list(session.columns)}; open http://{args.host}:{args.port}")
     build_app(session).run(host=args.host, port=args.port, debug=False)
