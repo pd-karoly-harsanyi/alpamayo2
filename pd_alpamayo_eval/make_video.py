@@ -38,7 +38,7 @@ from pd_alpamayo_eval.load_export import EgoTrajectory  # noqa: E402
 from pd_alpamayo_eval.s3util import NEBIUS_BUCKET, client, download_prefix, is_s3, parse_s3  # noqa: E402
 
 ARM_COLORS = {"real": "#2ca02c", "rendered": "#ff7f0e"}
-EXTRA_COLORS = ["#9467bd", "#17becf", "#d62728", "#8c564b", "#e377c2"]
+EXTRA_COLORS = ["#9467bd", "#17becf", "#bcbd22", "#8c564b", "#e377c2"]  # no red: red is the time cursor
 CAMERA_LABELS = {
     "camera_cross_left_120fov": "cross left",
     "camera_front_wide_120fov": "front wide",
