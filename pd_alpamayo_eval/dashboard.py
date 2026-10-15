@@ -188,9 +188,19 @@ class Session:
             partial_gts[t0] = g if (g is not None and truncated and len(g) >= 10) else None  # at least 1 s
             self.gt_horizon_s[i] = (len(g) / 10.0) if g is not None else 0.0
         self.paired_h: dict[str, dict[str, np.ndarray]] = {}  # horizon label -> column -> per-instant paired ADE
+        self.gt_ade_h: dict[str, dict[str, np.ndarray]] = {"3 s": {}, "6.4 s": {}}
+        gts = {t0: self.partial_gt(t0)[0] for t0 in self.t0s}  # full or partial recorded future (local frame)
         for col, recs in self.columns.items():
             paired, gt, gtp, end, diff = [], [], [], [], []
             per_h = {h: [] for h in HORIZONS}
+            gt3, gt64 = [], []
+            for t0 in self.t0s:
+                rec = recs.get(t0); g = gts[t0]
+                ok = rec is not None and rec.get("pred_xyz") is not None and g is not None
+                gt3.append(float(np.linalg.norm(rec["pred_xyz"][0, :30, :2] - g[:30, :2], axis=-1).mean()) if ok and len(g) >= 30 else np.nan)
+                gt64.append(float(np.linalg.norm(rec["pred_xyz"][0, :64, :2] - g[:64, :2], axis=-1).mean()) if ok and len(g) >= 64 else np.nan)
+            self.gt_ade_h["3 s"][col] = np.array(gt3)
+            self.gt_ade_h["6.4 s"][col] = np.array(gt64)
             for t0 in self.t0s:
                 rec, r = recs.get(t0), ref.get(t0)
                 ok = rec is not None and rec.get("pred_xyz") is not None
@@ -282,7 +292,7 @@ class Session:
         t0 = self.t0s[index]
         rec = self.columns[col].get(t0)
         ref = self.columns[self.reference].get(t0)
-        paths = [(self.history(t0), OVERLAY_COLORS["history"], 4, False)]
+        paths = []
         if col != self.reference and ref is not None and ref.get("pred_xyz") is not None:
             paths.append((ref["pred_xyz"][0], _hex_rgb(self.colors[self.reference]), 3, False))
         if rec is not None and rec.get("pred_xyz") is not None:
@@ -307,7 +317,6 @@ def bev_figure(s: Session, col: str, index: int, stretch_lateral: bool, shown_ca
     t0 = s.t0s[index]
     rec = s.columns[col].get(t0)
     ref = s.columns[s.reference].get(t0)
-    hist = s.history(t0)
     fig = go.Figure()
     shown = set(shown_cameras)
     legend_done: set[str] = set()
@@ -328,8 +337,6 @@ def bev_figure(s: Session, col: str, index: int, stretch_lateral: bool, shown_ca
         legend_done.add(kind)
     tv = np.arange(1, NUM_FUTURE_STEPS + 1) * 0.1
     empty = np.zeros((0, 3))
-    fig.add_trace(go.Scatter(x=hist[:, 1], y=hist[:, 0], mode="lines", line=dict(color="#1f77b4", width=4), name="ego history (1.5 s)",
-                             hovertemplate="history t=%{customdata:.1f}s<br>x=%{y:.1f} y=%{x:.1f}<extra></extra>", customdata=np.arange(-15, 1) * 0.1))
     p_ref = ref["pred_xyz"][0] if (col != s.reference and ref is not None and ref.get("pred_xyz") is not None) else empty
     fig.add_trace(go.Scatter(x=p_ref[:, 1], y=p_ref[:, 0], mode="lines", line=dict(color=s.colors[s.reference], width=2), opacity=0.45,
                              name=f"{s.reference} prediction", showlegend=col != s.reference, customdata=tv[: len(p_ref)],
@@ -357,6 +364,35 @@ def bev_figure(s: Session, col: str, index: int, stretch_lateral: bool, shown_ca
     )
     fig.update_xaxes(gridcolor="#eee"); fig.update_yaxes(gridcolor="#eee")
     return fig
+
+
+def _fmt(v: float) -> str:
+    return f"{v:.2f}" if np.isfinite(v) else "-"
+
+
+def metrics_table(s: Session, col: str, idx: int):
+    """Current-instant and running-mean ADE (m) at 3 s and 6.4 s, vs the real arm and vs the recorded future."""
+    from dash import html
+
+    rows = []
+    for label, series in (("vs real (paired)", s.paired_h), ("vs recorded future", s.gt_ade_h)):
+        if label.startswith("vs real") and col == s.reference:
+            continue
+        for h in ("3 s", "6.4 s"):
+            arr = series[h][col]
+            so_far = arr[: idx + 1]
+            n = int(np.isfinite(so_far).sum())
+            rows.append(html.Tr([
+                html.Td(f"{label} @ {h}"),
+                html.Td(_fmt(arr[idx]), style={"textAlign": "right", "fontWeight": "bold"}),
+                html.Td(f"{_fmt(float(np.nanmean(so_far))) if n else '-'}  (n={n})", style={"textAlign": "right"}),
+            ]))
+    dist = s.end_dist[col][idx]
+    rows.append(html.Tr([html.Td("predicted distance in 6.4 s"), html.Td(f"{dist:.1f}" if np.isfinite(dist) else "-", style={"textAlign": "right", "fontWeight": "bold"}), html.Td("")]))
+    return html.Table(style={"fontSize": "12px", "borderCollapse": "collapse", "width": "100%"}, children=[
+        html.Thead(html.Tr([html.Th("ADE (m)", style={"textAlign": "left"}), html.Th("this instant", style={"textAlign": "right"}), html.Th("mean so far", style={"textAlign": "right"})])),
+        html.Tbody(rows),
+    ])
 
 
 def card_timeline_figure(s: Session, col: str, index: int, horizon: str = "6.4 s"):
@@ -437,7 +473,6 @@ def build_app(s: Session):
             ]),
             html.Div(style={"fontSize": "11px", "color": "#444", "padding": "2px 8px", "display": "flex", "gap": "12px", "flexWrap": "wrap"}, children=[
                 html.Span("on the image:"),
-                swatch("#1f77b4", "ego history 1.5 s"),
                 *([swatch(s.colors[s.reference], f"{s.reference} prediction")] if col != s.reference else []),
                 swatch(s.colors[col], f"{col} prediction 6.4 s"),
                 swatch("#000000", "recorded future (dashed)"),
@@ -447,7 +482,7 @@ def build_app(s: Session):
                      + (f". Red border: differs from the {s.reference} arm." if col != s.reference else ""),
                      style={"margin": "6px 8px 0", "fontSize": "12px", "color": "#444"}),
             html.Div(id={"type": "txt", "col": col}, children="", style={"margin": "4px 8px", "padding": "6px", "background": "white", "border": "1px solid #999", "minHeight": "40px"}),
-            html.Div(id={"type": "met", "col": col}, children="", title="ADE = mean distance between two trajectories over the 6.4 s horizon; predicted distance = length of the predicted path", style={"margin": "2px 8px 6px", "fontSize": "13px", "color": "#333"}),
+            html.Div(id={"type": "met", "col": col}, children="", title="ADE = mean point-to-point distance between two 6.4 s trajectories (first 3 s or all 6.4 s); 'mean so far' = average over the instants up to this one", style={"margin": "2px 8px 6px", "color": "#333"}),
             dcc.Graph(id={"type": "tl", "col": col}, figure={}, config={"displayModeBar": False, "responsive": True}, style={"width": "100%", "height": f"{TL_H}px"}),
             # hidden prefetch of the next instant's images, so stepping forward is instant
             html.Div(style=hidden, children=[html.Img(id={"type": "pre", "col": col, "slot": k}, src="") for k in range(MAX_SLOTS)]),
@@ -567,19 +602,7 @@ def build_app(s: Session):
             txts.append(text or ("(no output)" if rec else "not available for this instant"))
             txt_styles.append({"margin": "4px 8px", "padding": "6px", "background": "white", "minHeight": "40px",
                                "border": "3px solid #d62728" if differs else "1px solid #999"})
-            metrics = []
-            if rec and rec.get("min_ade_vs_gt_m") is not None:
-                metrics.append(f"ADE vs recorded future {rec['min_ade_vs_gt_m']:.2f} m")
-            elif np.isfinite(s.gt_ade_partial[col][idx]):
-                metrics.append(f"ADE vs recorded future, first {s.gt_horizon_s[idx]:.1f} s only: {s.gt_ade_partial[col][idx]:.2f} m")
-            elif rec:
-                metrics.append("no recorded future left (pose log ends)")
-            if col != s.reference and np.isfinite(s.paired[col][idx]):
-                ph = s.paired_h.get(horizon, {}).get(col)
-                metrics.append(f"vs {s.reference} {s.paired[col][idx]:.2f} m (6.4 s)" + (f", {ph[idx]:.2f} m ({horizon})" if ph is not None and horizon != "6.4 s" and np.isfinite(ph[idx]) else ""))
-            if np.isfinite(s.end_dist[col][idx]):
-                metrics.append(f"predicted distance {s.end_dist[col][idx]:.1f} m")
-            mets.append("   ·   ".join(metrics))
+            mets.append(metrics_table(s, col, idx))
             tl = card_timeline_figure(s, col, idx, horizon)
             tl.update_layout(uirevision="keep")
             tls.append(tl)
