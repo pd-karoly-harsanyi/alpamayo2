@@ -14,7 +14,7 @@ then the arrow keys step too); a card per arm with the camera frame(s) at t0, a 
 prediction, the ego footprint and a camera-FOV inset), the Chain-of-Causation text flagged when it
 differs from the reference, and the metrics of that instant; an error-over-time chart (paired ADE
 of every column against the reference, dotted: reference against the recorded future) that you
-can click to jump; and the summary table of compare-runs.
+can click to jump. Scene-level numbers: `compare_runs.py`.
 """
 
 from __future__ import annotations
@@ -251,26 +251,6 @@ class Session:
         xyz, _ = self.trajectory.sample(future)
         return t0_rot[0].inv().apply(xyz - t0_xyz), future.size < NUM_FUTURE_STEPS
 
-    def summary_rows(self) -> list[dict]:
-        rows = []
-        ref_end = self.end_dist[self.reference]
-        for col in self.columns:
-            if col == self.reference:
-                rows.append({"column": f"{col} (reference)", "run": self.run_of[col], "n": int(np.isfinite(self.end_dist[col]).sum()),
-                             "paired ADE median / p90 (m)": "-", "pred. distance diff median (m)": "-", "longer / shorter": "-",
-                             "ADE vs GT median (m)": f"{np.nanmedian(self.gt_ade[col]):.2f}", "text differs": "-"})
-                continue
-            p = self.paired[col]; d = self.end_dist[col] - ref_end
-            rows.append({
-                "column": col, "run": self.run_of[col], "n": int(np.isfinite(p).sum()),
-                "paired ADE median / p90 (m)": f"{np.nanmedian(p):.2f} / {np.nanpercentile(p, 90):.2f}",
-                "pred. distance diff median (m)": f"{np.nanmedian(d):+.2f}",
-                "longer / shorter": f"{np.nanmean(d > 1):.0%} / {np.nanmean(d < -1):.0%}",
-                "ADE vs GT median (m)": f"{np.nanmedian(self.gt_ade[col]):.2f}",
-                "text differs": f"{np.nanmean(self.text_differs[col]):.0%}",
-            })
-        return rows
-
     def thumbnail(self, col: str, camera: str, index: int, overlay: bool = False) -> bytes:
         from PIL import Image
 
@@ -432,7 +412,7 @@ MAX_SLOTS = 6  # image slots per card (the "all six used" camera set)
 
 def build_app(s: Session):
     import dash
-    from dash import ALL, Input, Output, State, ctx, dash_table, dcc, html
+    from dash import ALL, Input, Output, State, ctx, dcc, html
     from flask import Response
 
     app = dash.Dash(__name__, title=f"alpamayo eval: {s.export_name}")
@@ -534,10 +514,6 @@ def build_app(s: Session):
         dcc.Interval(id="tick", interval=500, disabled=True),
         html.Div(id="cards", style={"display": "grid", "gridTemplateColumns": "repeat(4, minmax(0, 1fr))", "gap": "8px", "marginTop": "10px"},
                  children=[card(col) for col in cols]),
-        html.Details(style={"marginTop": "14px"}, open=False, children=[
-            html.Summary("summary over the scene (compare-runs)", style={"cursor": "pointer", "fontWeight": "bold"}),
-            dash_table.DataTable(data=s.summary_rows(), columns=[{"name": k, "id": k} for k in s.summary_rows()[0]], style_cell={"fontSize": 13, "padding": "4px"}, style_header={"fontWeight": "bold"}),
-        ]),
     ])
 
     @app.callback(Output("tick", "disabled"), Output("play", "children"), Output("tick", "interval"),

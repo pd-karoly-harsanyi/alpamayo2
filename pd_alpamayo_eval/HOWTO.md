@@ -149,7 +149,7 @@ another). All runs given must be on the same export; the first run's `real` is t
   aspect, zoomable, camera FOV wedges around the ego with the shown camera in gold), the instant's ADE
   table, and that arm's error-over-time plot (click to jump; all on one scale).
 - Cameras dropdown: front wide, the front three, all six used, or any single camera.
-- The compare-runs table is collapsed at the bottom.
+- Scene-level numbers are not on the dashboard; use `compare-runs` (section 5).
 - After pulling new code: restart the server AND hard-reload the tab (Ctrl-Shift-R). A stale tab gives
   `IndexError ... _prepare_grouping` 500s in the server log.
 - If anything jumps while stepping: `pixi run -e dev python tests/manual/probe_dashboard_layout.py
