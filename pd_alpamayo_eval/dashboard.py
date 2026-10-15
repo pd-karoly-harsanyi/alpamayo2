@@ -459,17 +459,24 @@ def build_app(s: Session):
     # The cards exist once, for every column, with stable ids; callbacks only change their properties.
     # That keeps images and plots mounted: a new src shows the old picture until the new one has
     # decoded, and a new figure redraws in place, so nothing blinks while stepping.
+    def _txt_style(differs: bool) -> dict:
+        # 1 px grey or 2 px red border on a 1 px margin, so the box keeps its size either way.
+        return {"margin": "2px 8px 4px", "padding": "4px 6px", "fontSize": "12px", "lineHeight": "1.3", "background": "white",
+                "minHeight": "34px", "border": "2px solid #d62728" if differs else "1px solid #999",
+                "boxSizing": "border-box"}
+
     def card(col):
         return html.Div(id={"type": "card", "col": col}, style=hidden, children=[
             html.Div(f"{col}  ·  {s.run_of[col]}", style={"background": "#222", "color": "white", "padding": "3px 6px", "fontSize": "13px"}),
             html.Div(style={"display": "flex", "flexWrap": "wrap"}, children=[
                 html.Img(id={"type": "img", "col": col, "slot": k}, src="", style=hidden) for k in range(MAX_SLOTS)
             ]),
-            dcc.Graph(id={"type": "bev", "col": col}, figure={}, config={"displayModeBar": False, "responsive": True}, style={"width": "100%", "height": f"{BEV_H}px"}),
+            # Text directly under the image: the eye goes image -> sentence without crossing the plot.
             html.Div(html.B("model reasoning"), title="Chain-of-Causation: the sentence the model generated from these cameras before sampling the trajectory"
                      + (f". Red border: differs from the {s.reference} arm." if col != s.reference else ""),
-                     style={"margin": "6px 8px 0", "fontSize": "12px", "color": "#444"}),
-            html.Div(id={"type": "txt", "col": col}, children="", style={"margin": "4px 8px", "padding": "6px", "background": "white", "border": "1px solid #999", "minHeight": "40px"}),
+                     style={"margin": "3px 8px 0", "fontSize": "11px", "color": "#444"}),
+            html.Div(id={"type": "txt", "col": col}, children="", style=_txt_style(False)),
+            dcc.Graph(id={"type": "bev", "col": col}, figure={}, config={"displayModeBar": False, "responsive": True}, style={"width": "100%", "height": f"{BEV_H}px"}),
             html.Div(id={"type": "met", "col": col}, children="", title="ADE = mean point-to-point distance between two 6.4 s trajectories (first 3 s or all 6.4 s); 'mean so far' = average over the instants up to this one", style={"margin": "2px 8px 6px", "color": "#333"}),
             dcc.Graph(id={"type": "tl", "col": col}, figure={}, config={"displayModeBar": False, "responsive": True}, style={"width": "100%", "height": f"{TL_H}px"}),
             # hidden prefetch of the next instant's images, so stepping forward is instant
@@ -588,8 +595,7 @@ def build_app(s: Session):
             text = _cot_text(rec) if rec else ""
             differs = bool(rec and ref and col != s.reference and _cot_text(rec) != _cot_text(ref))
             txts.append(text or ("(no output)" if rec else "not available for this instant"))
-            txt_styles.append({"margin": "4px 8px", "padding": "6px", "background": "white", "minHeight": "40px",
-                               "border": "3px solid #d62728" if differs else "1px solid #999"})
+            txt_styles.append(_txt_style(differs))
             mets.append(metrics_table(s, col, idx))
             tl = card_timeline_figure(s, col, idx, horizon)
             tl.update_layout(uirevision="keep")

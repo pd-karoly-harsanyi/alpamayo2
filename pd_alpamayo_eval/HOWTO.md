@@ -143,11 +143,11 @@ another). All runs given must be on the same export; the first run's `real` is t
 - Slider over instants with play / pause / step, speed, and a time readout. Click the slider handle
   and the arrow keys step too.
 - One card per arm in a single row that fills the window (tick the arms you want): camera frame(s)
-  at t0 with the paths projected onto them (history blue, reference prediction faint green, the arm's
-  prediction thick in its colour, recorded future dashed black), a bird's-eye plot (equal aspect,
-  zoomable, camera FOV wedges around the ego with the shown camera in gold), the text (red box when it
-  differs from the reference), the instant's metrics, and that arm's error-over-time plot (click to
-  jump; all on one scale).
+  at t0 with the paths projected onto them (reference prediction faint green, the arm's prediction
+  thick in its colour, recorded future dashed black; the bird's-eye legend names them), the model's
+  sentence right under the image (red box when it differs from the reference), a bird's-eye plot (equal
+  aspect, zoomable, camera FOV wedges around the ego with the shown camera in gold), the instant's ADE
+  table, and that arm's error-over-time plot (click to jump; all on one scale).
 - Cameras dropdown: front wide, the front three, all six used, or any single camera.
 - The compare-runs table is collapsed at the bottom.
 - After pulling new code: restart the server AND hard-reload the tab (Ctrl-Shift-R). A stale tab gives
