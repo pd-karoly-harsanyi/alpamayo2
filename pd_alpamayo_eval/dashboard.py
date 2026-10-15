@@ -459,21 +459,11 @@ def build_app(s: Session):
     # The cards exist once, for every column, with stable ids; callbacks only change their properties.
     # That keeps images and plots mounted: a new src shows the old picture until the new one has
     # decoded, and a new figure redraws in place, so nothing blinks while stepping.
-    def swatch(color, label):
-        return html.Span(style={"display": "inline-flex", "alignItems": "center", "gap": "4px"}, children=[
-            html.Span(style={"display": "inline-block", "width": "18px", "height": "4px", "background": color}), label])
-
     def card(col):
         return html.Div(id={"type": "card", "col": col}, style=hidden, children=[
             html.Div(f"{col}  ·  {s.run_of[col]}", style={"background": "#222", "color": "white", "padding": "3px 6px", "fontSize": "13px"}),
             html.Div(style={"display": "flex", "flexWrap": "wrap"}, children=[
                 html.Img(id={"type": "img", "col": col, "slot": k}, src="", style=hidden) for k in range(MAX_SLOTS)
-            ]),
-            html.Div(style={"fontSize": "11px", "color": "#444", "padding": "2px 8px", "display": "flex", "gap": "12px", "flexWrap": "wrap"}, children=[
-                html.Span("on the image:"),
-                *([swatch(s.colors[s.reference], f"{s.reference} prediction")] if col != s.reference else []),
-                swatch(s.colors[col], f"{col} prediction 6.4 s"),
-                swatch("#000000", "recorded future (dashed)"),
             ]),
             dcc.Graph(id={"type": "bev", "col": col}, figure={}, config={"displayModeBar": False, "responsive": True}, style={"width": "100%", "height": f"{BEV_H}px"}),
             html.Div(html.B("model reasoning"), title="Chain-of-Causation: the sentence the model generated from these cameras before sampling the trajectory"
