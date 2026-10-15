@@ -375,8 +375,8 @@ def metrics_table(s: Session, col: str, idx: int):
     from dash import html
 
     rows = []
-    for label, series in (("vs real (paired)", s.paired_h), ("vs recorded future", s.gt_ade_h)):
-        if label.startswith("vs real") and col == s.reference:
+    for label, series in (("vs recorded future", s.gt_ade_h), ("vs real", s.paired_h)):
+        if label == "vs real" and col == s.reference:
             continue
         for h in ("3 s", "6.4 s"):
             arr = series[h][col]
@@ -387,8 +387,6 @@ def metrics_table(s: Session, col: str, idx: int):
                 html.Td(_fmt(arr[idx]), style={"textAlign": "right", "fontWeight": "bold"}),
                 html.Td(f"{_fmt(float(np.nanmean(so_far))) if n else '-'}  (n={n})", style={"textAlign": "right"}),
             ]))
-    dist = s.end_dist[col][idx]
-    rows.append(html.Tr([html.Td("predicted distance in 6.4 s"), html.Td(f"{dist:.1f}" if np.isfinite(dist) else "-", style={"textAlign": "right", "fontWeight": "bold"}), html.Td("")]))
     return html.Table(style={"fontSize": "12px", "borderCollapse": "collapse", "width": "100%"}, children=[
         html.Thead(html.Tr([html.Th("ADE (m)", style={"textAlign": "left"}), html.Th("this instant", style={"textAlign": "right"}), html.Th("mean so far", style={"textAlign": "right"})])),
         html.Tbody(rows),
