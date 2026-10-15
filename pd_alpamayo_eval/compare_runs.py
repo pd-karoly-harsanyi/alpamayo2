@@ -32,8 +32,20 @@ def _end_distance(pred: np.ndarray) -> float:
     return float(np.linalg.norm(pred[0, -1, :2]))
 
 
-def _ade(a: np.ndarray, b: np.ndarray) -> float:
-    return float(np.linalg.norm(a[0, :, :2] - b[0, :, :2], axis=-1).mean())
+HORIZONS = {"1s": 10, "2s": 20, "3s": 30, "6.4s": 64}
+WEIGHT_TAU_S = 2.0
+_W = np.exp(-np.arange(1, 65) * 0.1 / WEIGHT_TAU_S)
+_W /= _W.sum()
+
+
+def _ade(a: np.ndarray, b: np.ndarray, steps: int = 64) -> float:
+    """Mean xy distance over the first ``steps`` of the 6.4 s horizon (10 steps = 1 s)."""
+    return float(np.linalg.norm(a[0, :steps, :2] - b[0, :steps, :2], axis=-1).mean())
+
+
+def _wade(a: np.ndarray, b: np.ndarray) -> float:
+    """Time-weighted ADE: per-step distance weighted by exp(-t / 2 s), so the near future counts most."""
+    return float((np.linalg.norm(a[0, :, :2] - b[0, :, :2], axis=-1) * _W).sum())
 
 
 def main() -> int:
@@ -64,6 +76,7 @@ def main() -> int:
     print(header)
     print("-" * len(header))
     table = []
+    by_horizon: dict[str, dict[str, tuple[float, float]]] = {}
     for col, recs in columns.items():
         if col == ref_col:
             continue
@@ -71,6 +84,12 @@ def main() -> int:
         if not common:
             continue
         paired = np.array([_ade(recs[t]["pred_xyz"], ref[t]["pred_xyz"]) for t in common])
+        by_horizon[col] = {}
+        for name, steps in HORIZONS.items():
+            v = np.array([_ade(recs[t]["pred_xyz"], ref[t]["pred_xyz"], steps) for t in common])
+            by_horizon[col][name] = (float(np.median(v)), float(np.percentile(v, 90)))
+        wv = np.array([_wade(recs[t]["pred_xyz"], ref[t]["pred_xyz"]) for t in common])
+        by_horizon[col]["weighted"] = (float(np.median(wv)), float(np.percentile(wv, 90)))
         dist = np.array([_end_distance(recs[t]["pred_xyz"]) - _end_distance(ref[t]["pred_xyz"]) for t in common])
         gt = [recs[t]["min_ade_vs_gt_m"] for t in common if recs[t].get("min_ade_vs_gt_m") is not None]
         text = np.mean([_cot_text(recs[t]) != _cot_text(ref[t]) for t in common])
@@ -94,6 +113,14 @@ def main() -> int:
         )
     ref_gt = [r["min_ade_vs_gt_m"] for r in ref.values() if r.get("min_ade_vs_gt_m") is not None]
     print(f"\n{ref_col}: ADE vs GT median {np.median(ref_gt):.3f} m (n={len(ref_gt)})")
+    if by_horizon:
+        names = list(HORIZONS) + ["weighted"]
+        print(f"\npaired ADE vs {ref_col} by horizon, median / p90 (m); 'weighted' = exp(-t/{WEIGHT_TAU_S:g} s) time weighting:")
+        print(f"{'column':24s}" + "".join(f"{n:>15s}" for n in names))
+        for col, vals in by_horizon.items():
+            print(f"{col:24s}" + "".join(f"{vals[n][0]:7.2f} /{vals[n][1]:6.2f}" for n in names))
+        for row in table:
+            row["by_horizon"] = by_horizon.get(row["column"])
     if args.json:
         args.json.write_text(json.dumps({"reference": ref_col, "rows": table}, indent=1), encoding="utf-8")
     return 0

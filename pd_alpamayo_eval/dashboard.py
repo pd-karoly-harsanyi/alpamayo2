@@ -43,6 +43,10 @@ from pd_alpamayo_eval.make_video import (  # noqa: E402
 )
 
 THUMB_W = 960
+# Paired-ADE horizons selectable in the dashboard: steps of the 6.4 s prediction, None = time-weighted.
+HORIZONS = {"1 s": 10, "2 s": 20, "3 s": 30, "6.4 s": 64, "weighted (exp, 2 s)": None}
+HORIZON_W = np.exp(-np.arange(1, 65) * 0.1 / 2.0)
+HORIZON_W /= HORIZON_W.sum()
 OVERLAY_COLORS = {"history": (31, 119, 180), "gt": (0, 0, 0)}
 
 
@@ -183,19 +187,26 @@ class Session:
             g, truncated = self.partial_gt(t0)
             partial_gts[t0] = g if (g is not None and truncated and len(g) >= 10) else None  # at least 1 s
             self.gt_horizon_s[i] = (len(g) / 10.0) if g is not None else 0.0
+        self.paired_h: dict[str, dict[str, np.ndarray]] = {}  # horizon label -> column -> per-instant paired ADE
         for col, recs in self.columns.items():
             paired, gt, gtp, end, diff = [], [], [], [], []
+            per_h = {h: [] for h in HORIZONS}
             for t0 in self.t0s:
                 rec, r = recs.get(t0), ref.get(t0)
                 ok = rec is not None and rec.get("pred_xyz") is not None
                 okr = ok and r is not None and r.get("pred_xyz") is not None
-                paired.append(float(np.linalg.norm(rec["pred_xyz"][0, :, :2] - r["pred_xyz"][0, :, :2], axis=-1).mean()) if okr else np.nan)
+                dist = np.linalg.norm(rec["pred_xyz"][0, :, :2] - r["pred_xyz"][0, :, :2], axis=-1) if okr else None
+                paired.append(float(dist.mean()) if okr else np.nan)
+                for h, steps in HORIZONS.items():
+                    per_h[h].append((float((dist * HORIZON_W).sum()) if steps is None else float(dist[:steps].mean())) if okr else np.nan)
                 gt.append(float(rec["min_ade_vs_gt_m"]) if ok and rec.get("min_ade_vs_gt_m") is not None else np.nan)
                 g = partial_gts[t0]
                 gtp.append(float(np.linalg.norm(rec["pred_xyz"][0, : len(g), :2] - g[:, :2], axis=-1).mean()) if (ok and g is not None and rec.get("min_ade_vs_gt_m") is None) else np.nan)
                 end.append(float(np.linalg.norm(rec["pred_xyz"][0, -1, :2])) if ok else np.nan)
                 diff.append(float(_cot_text(rec) != _cot_text(r)) if (rec and r) else np.nan)
             self.paired[col] = np.array(paired)
+            for h in HORIZONS:
+                self.paired_h.setdefault(h, {})[col] = np.array(per_h[h])
             self.gt_ade[col] = np.array(gt)
             self.gt_ade_partial[col] = np.array(gtp)
             self.end_dist[col] = np.array(end)
@@ -209,6 +220,10 @@ class Session:
         self.forward_range = (min(x_all) - 3, max(x_all) + 3)
         finite = [v for arr in list(self.paired.values()) + [self.gt_ade[self.reference]] for v in arr if np.isfinite(v)]
         self.error_y_max = max(0.5, float(np.percentile(finite, 99))) * 1.05 if finite else 1.0
+        self.error_y_max_h = {}
+        for h, cols in self.paired_h.items():
+            vals = [v for arr in cols.values() for v in arr if np.isfinite(v)]
+            self.error_y_max_h[h] = max(0.2, float(np.percentile(vals, 99))) * 1.05 if vals else 1.0
 
     @lru_cache(maxsize=4096)
     def history(self, t0: int) -> np.ndarray:
@@ -344,12 +359,14 @@ def bev_figure(s: Session, col: str, index: int, stretch_lateral: bool, shown_ca
     return fig
 
 
-def card_timeline_figure(s: Session, col: str, index: int):
+def card_timeline_figure(s: Session, col: str, index: int, horizon: str = "6.4 s"):
     """Small error-over-time plot for one column (same y scale on every card); click to jump."""
     import plotly.graph_objects as go
 
     fig = go.Figure()
     hz = s.gt_horizon_s
+    paired = s.paired_h.get(horizon, {}).get(col, s.paired[col])
+    hlabel = horizon if horizon in s.paired_h else "6.4 s"
     if col == s.reference:
         fig.add_trace(go.Scatter(x=s.times, y=s.gt_ade[col], mode="lines+markers", marker=dict(size=3), line=dict(color="black", width=1.5),
                                  name="vs recorded future", hovertemplate="vs recorded future (6.4 s) %{y:.2f} m<extra></extra>"))
@@ -363,12 +380,13 @@ def card_timeline_figure(s: Session, col: str, index: int):
         fig.add_trace(go.Scatter(x=s.times, y=s.gt_ade_partial[s.reference], mode="lines", line=dict(color="#aaaaaa", width=1, dash="dot"),
                                  name=f"{s.reference} vs recorded future, partial", customdata=hz,
                                  hovertemplate="ref vs recorded future, first %{customdata:.1f} s only: %{y:.2f} m<extra></extra>"))
-        fig.add_trace(go.Scatter(x=s.times, y=s.paired[col], mode="lines+markers", marker=dict(size=3), line=dict(color=s.colors[col], width=2),
-                                 name=f"vs {s.reference}", hovertemplate=f"vs {s.reference} %{{y:.2f}} m<extra></extra>"))
-        title = f"{col} vs {s.reference}: median {np.nanmedian(s.paired[col]):.2f} m, p90 {np.nanpercentile(s.paired[col], 90):.2f} m"
+        fig.add_trace(go.Scatter(x=s.times, y=paired, mode="lines+markers", marker=dict(size=3), line=dict(color=s.colors[col], width=2),
+                                 name=f"vs {s.reference}", hovertemplate=f"vs {s.reference} ({hlabel}) %{{y:.2f}} m<extra></extra>"))
+        title = f"{col} vs {s.reference} @ {hlabel}: median {np.nanmedian(paired):.2f} m, p90 {np.nanpercentile(paired, 90):.2f} m"
     fig.add_vline(x=float(s.times[index]), line=dict(color="#d62728", width=2))
     fig.update_layout(height=TL_H, margin=dict(l=40, r=8, t=26, b=30), title=dict(text=title, font=dict(size=11), x=0.02, y=0.97),
-                      showlegend=False, xaxis=dict(title=None, gridcolor="#eee"), yaxis=dict(title="ADE (m)", range=[0, s.error_y_max], gridcolor="#eee"),
+                      showlegend=False, xaxis=dict(title=None, gridcolor="#eee"),
+                      yaxis=dict(title="ADE (m)", range=[0, s.error_y_max if hlabel == "6.4 s" else s.error_y_max_h.get(hlabel, s.error_y_max)], gridcolor="#eee"),
                       paper_bgcolor="white", plot_bgcolor="white", clickmode="event", hovermode="x unified")
     return fig
 
@@ -479,6 +497,7 @@ def build_app(s: Session):
             html.Span("arms"), dcc.Checklist(id="cols", options=[{"label": c, "value": c} for c in cols], value=cols[:4], inline=True),
             dcc.Checklist(id="aspect", options=[{"label": "stretch lateral axis", "value": "stretch"}], value=[], inline=True),
             dcc.Checklist(id="overlay", options=[{"label": "paths on images", "value": "on"}], value=["on"], inline=True),
+            html.Span("ADE horizon"), dcc.Dropdown(id="horizon", options=[{"label": h, "value": h} for h in HORIZONS], value="6.4 s", clearable=False, style={"width": "170px"}),
             html.Span(id="where", style={"fontWeight": "bold"}),
         ]),
         dcc.Slider(id="idx", min=0, max=n - 1, step=1, value=0, marks=marks, tooltip={"placement": "bottom", "always_visible": False}, updatemode="drag"),
@@ -511,7 +530,7 @@ def build_app(s: Session):
                 return int(np.argmin(np.abs(s.times - click["points"][0]["x"])))
         return idx
 
-    def _view(idx, selected, camera_set, aspect, overlay, token):
+    def _view(idx, selected, camera_set, aspect, overlay, horizon, token):
         if token != page_token:  # a tab left open across a server restart would otherwise show mixed scenes
             n_out = len(cols) * (1 + 3 * MAX_SLOTS + 5)
             banner = "THIS TAB IS STALE: the server now serves a different scene or run. Reload the page (Ctrl-Shift-R)."
@@ -556,11 +575,12 @@ def build_app(s: Session):
             elif rec:
                 metrics.append("no recorded future left (pose log ends)")
             if col != s.reference and np.isfinite(s.paired[col][idx]):
-                metrics.append(f"vs {s.reference} {s.paired[col][idx]:.2f} m")
+                ph = s.paired_h.get(horizon, {}).get(col)
+                metrics.append(f"vs {s.reference} {s.paired[col][idx]:.2f} m (6.4 s)" + (f", {ph[idx]:.2f} m ({horizon})" if ph is not None and horizon != "6.4 s" and np.isfinite(ph[idx]) else ""))
             if np.isfinite(s.end_dist[col][idx]):
                 metrics.append(f"predicted distance {s.end_dist[col][idx]:.1f} m")
             mets.append("   ·   ".join(metrics))
-            tl = card_timeline_figure(s, col, idx)
+            tl = card_timeline_figure(s, col, idx, horizon)
             tl.update_layout(uirevision="keep")
             tls.append(tl)
         grid = {"display": "grid", "gridTemplateColumns": f"repeat({max(1, len(selected))}, minmax(0, 1fr))", "gap": "8px", "marginTop": "10px"}
@@ -582,7 +602,7 @@ def build_app(s: Session):
         Output("stale", "style"),
         Output("stale", "children"),
         Input("idx", "value"), Input("cols", "value"), Input("cameras", "value"), Input("aspect", "value"), Input("overlay", "value"),
-        State("page-token", "data"),
+        Input("horizon", "value"), State("page-token", "data"),
     )(_view)
     app.view_fn = _view  # the raw function, for tests
 

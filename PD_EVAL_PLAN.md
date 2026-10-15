@@ -259,6 +259,22 @@ on 72 % of instants between two seeds of the SAME images, so sentence-level text
 sampling noise and useless as a metric; meta-actions are required. Per-scene gate candidates:
 paired-ADE p90 relative to the seed floor, and the signed distance bias (floor: ~0, symmetric).
 
+**ADE by horizon (Italy, 2026-10-15; `compare-runs` now prints this; the dashboard has a horizon
+selector).** Paired ADE vs real, median / p90 in m:
+
+| column | 1 s | 2 s | 3 s | 6.4 s | weighted exp(-t/2 s) |
+|---|---|---|---|---|---|
+| real@seed1 (floor) | 0.05 / 0.13 | 0.21 / 0.42 | 0.38 / 0.82 | 0.95 / 2.27 | 0.44 / 1.04 |
+| rendered | 0.04 / 0.14 | 0.13 / 0.62 | 0.29 / 1.59 | 1.14 / 5.78 | 0.51 / 2.34 |
+| rendered_rainy | 0.05 / 0.17 | 0.20 / 0.77 | 0.40 / 1.92 | 1.73 / 5.93 | 0.65 / 2.63 |
+| rendered_snowy | 0.06 / 0.17 | 0.22 / 0.72 | 0.41 / 1.73 | 1.34 / 6.03 | 0.63 / 2.59 |
+
+Reading: the first second is identical in every arm (5 cm), i.e. it is determined by the ego
+history, not the pictures; a short-horizon metric cannot see the replica and would also pass the
+blind test trivially. The render effect opens from 3 s (p90 2x the floor) and is largest at 6.4 s
+(2.5x). Report per horizon; if one number is wanted, the time-weighted ADE (tau = 2 s) keeps the
+tail visible (p90 2.3 m vs floor 1.0 m) without being dominated by it.
+
 **Two more scenes (2026-10-14), same recipe, both with rainy + snowy.** Madrid intersection: bundle
 `ea732026-8a79-474e-9bf4-70b2f6438256`, export `madrid_full_variations` (185 instants), run
 `alpamayo-run-e368b20f`. Austria roundabout: bundle `890838c3-7aa1-4278-b8e4-e4040b0688fb`,
