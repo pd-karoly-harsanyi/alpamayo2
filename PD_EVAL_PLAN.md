@@ -132,10 +132,16 @@ and unsets the pod's `HF_TOKEN` at runtime so the file governs. Claude cannot su
 token-bearing job (auto-mode classifier); the user runs it. Inference timing and minADE are still
 to be measured (next run).
 
-## TODO (2026-10-14)
+## TODO (2026-10-19)
 
 Where things stand: three scenes run end to end (Italy with a seed floor, Madrid, Austria), the
-dashboard and video work, everything generated is listed in `pd_alpamayo_eval/INVENTORY.md`.
+improved Italy and Austria replicas re-run and compared (Phase 2, "round 2": unchanged gap to
+real), the dashboard and video work, everything generated is listed in
+`pd_alpamayo_eval/INVENTORY.md`.
+
+0. **Madrid v2**: when the improved Madrid replica finishes, the same three commands (render with
+   `replipair_step_alpamayo.json`, export `--name full`, mirror to `madrid_full_variations_v2`),
+   submit, video under a new name, `compare-runs` old vs new.
 
 1. **Seed floors for Madrid and Austria** (one submit each: `--arms real --seed 1`), then
    `compare-runs` per scene. Without them the Madrid/Austria paired numbers have no scale.
@@ -299,6 +305,46 @@ symmetric; so "renders bias speed" is the general statement, "faster" was Italy-
 (3) the tails are large everywhere (p90 4-7.7 m). Videos: `outputs/madrid_full_variations_e368b20f.mp4`,
 `outputs/austria_full_variations_17c45f0a.mp4`. Next: seed-floor run (`--arms real --seed 1`) for
 Madrid and Austria to size their paired numbers.
+
+**Improved replicas, round 2 (2026-10-19).** The Italy and Austria replicas were re-trained with
+improved quality (Madrid still running) and rendered with the same step config: Italy bundle
+`f47e7a5d-bf47-4d9f-a540-07f158d28800` (artifact `281b3822`), Austria bundle
+`d2fb85d9-2bd0-41bf-9db5-ec5251707da2` (artifact `3a3586e2`); exports `italy_full_variations_v2`
+and `austria_full_variations_v2` (same instant grids as before); runs `alpamayo-run-928b4727`
+(Italy) and `alpamayo-run-9fc99df6` (Austria), seed 42, 1 sample, with PNGs. Two checks first:
+(a) `real@new` vs `real@old` paired ADE is exactly 0.000 on every instant of both scenes (same
+images, same seed): the whole pipeline, from export to model to upload, is bit-reproducible across
+jobs, so any difference below is the pictures; (b) the instant grids match, so old and new runs join
+instant by instant (dashboard and `compare-runs` support this now, `--labels old new`).
+
+How much the new renders moved the prediction, and whether they got closer to real
+(`compare-runs`, seed floor from Italy: paired 0.95 / 2.27 m):
+
+| scene / column | vs real: paired ADE med / p90 | distance diff | longer / shorter | vs rendered@old: paired ADE med / p90 | ADE vs GT med |
+|---|---|---|---|---|---|
+| Italy rendered old | 1.14 / 5.78 m | +2.60 m | 68 % / 13 % | (reference) | 1.33 m (real 0.86) |
+| Italy rendered **new** | 1.18 / 5.55 m | +2.30 m | 70 % / 16 % | 0.38 / 1.85 m | 1.53 m |
+| Italy rainy old / new | 1.73 / 5.93 → 1.71 / 5.31 m | +4.34 → +3.99 m | 75/14 → 70/14 % | 0.97 / 4.92 m | 1.64 → 1.87 m |
+| Italy snowy old / new | 1.34 / 6.03 → 1.59 / 5.56 m | +1.75 → +2.16 m | 59/23 → 56/32 % | 1.37 / 6.46 m | 1.17 → 1.57 m |
+| Austria rendered old | 0.73 / 4.01 m | -1.01 m | 16 % / 50 % | (reference) | 2.56 m (real 1.99) |
+| Austria rendered **new** | 0.92 / 4.07 m | -1.12 m | 18 % / 53 % | 0.20 / 3.48 m | 2.80 m |
+| Austria rainy old / new | 1.04 / 3.78 → 1.07 / 3.72 m | -0.91 → -0.69 m | 21/48 → 24/44 % | 0.48 / 3.58 m | 2.13 → 2.12 m |
+| Austria snowy old / new | 1.31 / 4.39 → 1.27 / 4.55 m | -1.45 → -1.18 m | 20/52 → 19/54 % | 1.13 / 3.65 m | 2.71 → 3.13 m |
+
+Reading: (1) with common random numbers the new clear-weather render changes the prediction by
+only 0.38 m (Italy) / 0.20 m (Austria) median, i.e. the model sees the two renders as nearly the
+same scene; the weather variations changed more (new rainy/snowy differ 0.5-1.4 m from the old
+ones) because the weather effects themselves were re-rendered; (2) **the gap to real did not
+close**: paired ADE vs real is flat on Italy (1.14 → 1.18 m) and slightly worse on Austria
+(0.73 → 0.92 m, p90 equal), ADE vs the recorded future is 0.2 m worse on both, all within the
+seed-level noise of ~0.3 m on ADE-vs-GT, so "unchanged" is the honest summary; (3) the
+scene-specific speed bias is fully preserved (Italy renders +2.3 m / 70 % longer, Austria -1.1 m /
+53 % shorter), so whatever drives the model to speed up on the Italy render and slow down on the
+Austria render is not what the quality pass improved. For the eye: the sentence differs from the old
+render on 36-38 % of instants (vs 70 % between seeds), consistent with (1). Videos:
+`outputs/italy_full_variations_v2_928b4727.mp4`, `outputs/austria_full_variations_v2_9fc99df6.mp4`;
+old and new side by side on the same instant:
+`pixi run -e dev dashboard <old run> <new run> --labels '' v2`.
 
 ## Plan
 

@@ -183,6 +183,8 @@ overwrites last week's video.
 Runs so far (all seed 42, 1 sample, 10 diffusion steps): Italy `full_variations` run
 `alpamayo-run-27f93c3e` + floor `alpamayo-run-af7ff7bc` (seed 1); Madrid `madrid_full_variations`
 run `alpamayo-run-e368b20f`; Austria `austria_full_variations` run `alpamayo-run-17c45f0a`.
+Improved replicas (2026-10-19): Italy `italy_full_variations_v2` run `alpamayo-run-928b4727`,
+Austria `austria_full_variations_v2` run `alpamayo-run-9fc99df6`.
 
 ## 9. Tests
 

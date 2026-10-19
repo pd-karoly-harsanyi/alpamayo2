@@ -60,6 +60,8 @@ and `<t0_ns>_<arm>.png` (NVIDIA's six-camera figure) where `--save-viz` was used
 | `alpamayo-run-af7ff7bc` | `full_variations` | real | 1 | Italy seed-to-seed noise floor |
 | `alpamayo-run-e368b20f` | `madrid_full_variations` | all four | 42 | no PNGs |
 | `alpamayo-run-17c45f0a` | `austria_full_variations` | all four | 42 | no PNGs |
+| `alpamayo-run-928b4727` | `italy_full_variations_v2` | all four | 42 | improved Italy replica, with PNGs |
+| `alpamayo-run-9fc99df6` | `austria_full_variations_v2` | all four | 42 | improved Austria replica, with PNGs |
 | `alpamayo-run-0d74dd90` | `w5s_3s` | real, rendered | 42 | first end-to-end test, with PNGs |
 
 Earlier infrastructure jobs (no results of interest): `alpamayo-probe-f5d8ec4f` (env + weights),
@@ -81,6 +83,7 @@ full), `alpamayo-exec-*` (diagnostics). Ray dashboard:
 - `~/workspace/alpamayo2/exports/italy_3s/`: the first local export (= `w5s_3s`), 185 MB, gitignored.
 - `~/workspace/alpamayo2/outputs/*.mp4`: videos (gitignored): `italy_full_variations_27f93c3e`,
   `madrid_full_variations_e368b20f`, `austria_full_variations_17c45f0a`, `italy_w5s_3s_0d74dd90`
-  (current layout); `full_variations_27f93c3e`, `w5s_3s_0d74dd90` (older layout).
+  (current layout); `italy_full_variations_v2_928b4727`, `austria_full_variations_v2_9fc99df6`
+  (improved replicas, 2026-10-19); `full_variations_27f93c3e`, `w5s_3s_0d74dd90` (older layout).
 - `/tmp/replipair_ee58e53a/`: full download of the first Italy replipair artifact (6.4 GB).
 - AWS profiles: `default` (SSO), `nebius` (object-store key, see `HOWTO.md` §0).
