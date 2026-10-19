@@ -185,7 +185,7 @@ Runs so far (all seed 42, 1 sample, 10 diffusion steps): Italy `full_variations`
 run `alpamayo-run-e368b20f`; Austria `austria_full_variations` run `alpamayo-run-17c45f0a`.
 Improved replicas (2026-10-19): Italy `italy_full_variations_v2` run `alpamayo-run-928b4727`,
 Austria `austria_full_variations_v2` run `alpamayo-run-9fc99df6`, Madrid `madrid_full_variations_v2`
-run `alpamayo-run-99bb841a`.
+run `alpamayo-run-99bb841a` + floor `alpamayo-run-e6d4f80e` (seed 1).
 
 ## 9. Tests
 

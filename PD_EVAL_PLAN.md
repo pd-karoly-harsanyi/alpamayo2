@@ -136,14 +136,13 @@ to be measured (next run).
 
 Where things stand: three scenes run end to end (Italy with a seed floor, Madrid, Austria), the
 improved replicas of all three re-run and compared (Phase 2, "round 2": Italy/Austria unchanged,
-Madrid modestly closer to real), the dashboard and video work, everything generated is listed in
+Madrid's apparent gain is inside its seed floor), the dashboard and video work, everything generated is listed in
 `pd_alpamayo_eval/INVENTORY.md`.
 
-0. **Seed floor for Madrid first** (`--arms real --seed 1` on `madrid_full_variations_v2`): the
-   round-2 Madrid improvement (0.3 m median) can only be called real against that floor.
-
-1. **Seed floors for Madrid and Austria** (one submit each: `--arms real --seed 1`), then
-   `compare-runs` per scene. Without them the Madrid/Austria paired numbers have no scale.
+1. **Seed floor for Austria** (one submit: `--arms real --seed 1` on `austria_full_variations_v2`),
+   then `compare-runs`. Madrid's floor exists now (`alpamayo-run-e6d4f80e`, 2.29 / 7.65 m) and
+   swallows the whole Madrid render effect; Italy's is 0.95 / 2.27 m. Austria's paired numbers
+   (0.7-1.3 m) still have no scale.
 2. **Meta-action text metric**: run the model's `meta_action` task (longitudinal / lateral / lane
    labels) per instant and arm; sentence-level text comparison is pure sampling noise (72 %
    differs between two seeds of the same images). Needs a small addition to `run_export.py`
@@ -335,6 +334,7 @@ How much the new renders moved the prediction, and whether they got closer to re
 | Madrid rendered **new** | 2.08 / 7.08 m | +0.56 m | 49 % / 44 % | 0.48 / 6.00 m | 2.71 m |
 | Madrid rainy old / new | 2.44 / 7.60 → 2.25 / 7.63 m | +0.12 → +0.08 m | 45/43 → 45/43 % | 0.83 / 6.26 m | 3.08 → 3.46 m |
 | Madrid snowy old / new | 2.32 / 7.40 → 2.57 / 6.82 m | -1.04 → -0.96 m | 38/51 → 39/50 % | 1.20 / 6.62 m | 2.55 → 2.09 m |
+| **Madrid seed floor** real@seed1 (run `alpamayo-run-e6d4f80e`) | 2.29 / 7.65 m | -2.90 m | 30 % / 55 % | 2.29 / 7.65 m | 1.73 m |
 
 Reading: (1) with common random numbers the new clear-weather render changes the prediction by
 only 0.38 m (Italy) / 0.20 m (Austria) / 0.48 m (Madrid) median, i.e. the model sees the two
@@ -344,9 +344,14 @@ so there the new render did flip a minority of instants; the weather variations 
 re-rendered; (2) **the gap to real did not close on Italy and Austria**: paired ADE vs real is flat
 on Italy (1.14 → 1.18 m) and slightly worse on Austria (0.73 → 0.92 m, p90 equal), ADE vs the
 recorded future is 0.2 m worse on both, all within the seed-level noise of ~0.3 m on ADE-vs-GT;
-**Madrid improved modestly**: paired ADE vs real 2.38 → 2.08 m median, p90 7.65 → 7.08 m, and ADE vs
-the recorded future 3.27 → 2.71 m, which is now within 0.1 m of the real arm's 2.80 m; without a
-Madrid seed floor that 0.3 m is suggestive, not conclusive (the Italy floor is 0.95 m); (3) the
+**Madrid looked like a modest improvement** (paired ADE vs real 2.38 → 2.08 m median, p90 7.65 →
+7.08 m, ADE vs the recorded future 3.27 → 2.71 m) **but the Madrid seed floor is 2.29 / 7.65 m**:
+two seeds on the identical real images differ by as much as either render does, so on Madrid the
+render effect and the 0.3 m "improvement" are both indistinguishable from sampling noise. The
+Madrid floor also shows how bimodal the model is there: seed 1 drives 2.9 m shorter than seed 42 on
+the median instant (55 % shorter by >1 m) and happens to land much closer to the recorded future
+(1.73 m vs 2.80 m), i.e. at this intersection the seed decides stop-vs-go, and one trajectory sample
+per instant cannot resolve it (TODO 4, several samples per instant, is the fix); (3) the
 scene-specific speed bias is fully preserved (Italy renders +2.3 m / 70 % longer, Austria -1.1 m /
 53 % shorter, Madrid symmetric as before), so whatever drives the model to speed up on the Italy
 render and slow down on the Austria render is not what the quality pass improved. For the eye: the
