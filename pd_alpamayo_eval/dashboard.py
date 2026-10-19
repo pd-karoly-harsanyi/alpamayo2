@@ -4,9 +4,11 @@
         [s3://pd-nebius-ray/alpamayo-eval/full_variations/runs/alpamayo-run-af7ff7bc ...] [--port 8050]
 
 then open http://localhost:8050. Runs are staged into ``~/.cache/alpamayo-eval`` (same cache as
-make-video); images are read lazily per instant and thumbnailed on first use. Every run must be on
-the same export. The first run's ``real`` arm is the reference; arms of further runs appear as
-``<arm>@seed<N>`` columns (e.g. ``real@seed1`` is the seed-to-seed noise floor).
+make-video); images are read lazily per instant and thumbnailed on first use. The first run's
+``real`` arm is the reference; arms of further runs appear as ``<arm>@seed<N>`` columns (e.g.
+``real@seed1`` is the seed-to-seed noise floor). A run on ANOTHER export of the same scene (a newer
+render of the same clip) is allowed as long as its instants are the same t0 grid: its columns are
+tagged ``<arm>@<export name>`` and show that export's images. ``--labels`` overrides the tags.
 
 What you get: a slider over instants with play / pause / step and speed (click the slider handle,
 then the arrow keys step too); a card per arm with the camera frame(s) at t0, a bird's-eye plot
@@ -128,31 +130,55 @@ CAMERA_SETS = {
 class Session:
     """Everything the callbacks need, loaded once."""
 
-    def __init__(self, run_uris: list[str], cache: Path):
+    def __init__(self, run_uris: list[str], cache: Path, labels: list[str] | None = None):
         self.cache = cache
         self.columns: dict[str, dict[int, dict]] = {}
         self.arm_of: dict[str, str] = {}
         self.run_of: dict[str, str] = {}
+        self.export_dir_of: dict[str, Path] = {}  # per column: where its images live
+        self.export_of: dict[str, str] = {}  # per column: export name
         export_uri = None
+        export_dirs: dict[str, Path] = {}
+        if labels and len(labels) != len(run_uris):
+            raise SystemExit(f"--labels needs one label per run ({len(run_uris)} runs, {len(labels)} labels)")
         for i, uri in enumerate(run_uris):
             run_dir = _stage(uri, cache)
             summary, records = _load_run(run_dir)
+            run_export = summary.get("export")
+            if not run_export:
+                raise SystemExit(f"{uri}: no export recorded in summary.json")
             if export_uri is None:
-                export_uri = summary.get("export")
-            elif summary.get("export") != export_uri:
-                raise SystemExit(f"{uri} is on export {summary.get('export')}, expected {export_uri}")
-            tag = "" if i == 0 else f"@seed{summary.get('seed')}"
+                export_uri = run_export
+            name = run_export.rstrip("/").rsplit("/", 1)[-1]
+            if run_export not in export_dirs:
+                export_dirs[run_export] = _stage(run_export, cache, skip_suffixes=())
+                if not (export_dirs[run_export] / MANIFEST_NAME).is_file():
+                    raise SystemExit(f"{export_dirs[run_export]} has no {MANIFEST_NAME}")
+            if labels:
+                tag = f"@{labels[i]}" if labels[i] else ""
+            elif i == 0:
+                tag = ""
+            elif run_export != export_uri:
+                tag = f"@{name}"
+            else:
+                tag = f"@seed{summary.get('seed')}"
             for (t0, arm), rec in records.items():
                 col = f"{arm}{tag}"
                 self.columns.setdefault(col, {})[int(t0)] = rec
                 self.arm_of[col] = arm
                 self.run_of[col] = summary.get("run_id", run_dir.name)
-        if export_uri is None:
-            raise SystemExit("no export recorded in the run summaries")
-        self.export_dir = _stage(export_uri, cache, skip_suffixes=())
-        if not (self.export_dir / MANIFEST_NAME).is_file():
-            raise SystemExit(f"{self.export_dir} has no {MANIFEST_NAME}")
+                self.export_dir_of[col] = export_dirs[run_export]
+                self.export_of[col] = name
+        self.export_dir = export_dirs[export_uri]
         self.manifest = read_manifest(self.export_dir)
+        for other_uri, other_dir in export_dirs.items():  # a second export must sit on the same t0 grid (same clip, same pose log)
+            if other_uri == export_uri:
+                continue
+            other = read_manifest(other_dir)
+            if other.get("scene") != self.manifest.get("scene"):
+                raise SystemExit(f"{other_uri} is scene {other.get('scene')!r}, the reference export is {self.manifest.get('scene')!r}")
+            if [int(x["t0_ns"]) for x in other["instants"]] != [int(x["t0_ns"]) for x in self.manifest["instants"]]:
+                raise SystemExit(f"{other_uri} has a different instant grid than {export_uri}; the dashboard joins columns by t0")
         self.instants = self.manifest["instants"]
         self.t0s = [int(inst["t0_ns"]) for inst in self.instants]
         self.times = np.array([(t - self.t0s[0]) / 1e9 for t in self.t0s])
@@ -257,8 +283,8 @@ class Session:
         arm = self.arm_of[col]
         inst = self.instants[index]
         t_ns = int(inst["frames"][camera][-1])
-        src = self.export_dir / arm / camera / f"{t_ns}.jpg"
-        thumb = self.cache / "thumbs" / self.export_name / arm / camera / f"{t_ns}.jpg"
+        src = self.export_dir_of[col] / arm / camera / f"{t_ns}.jpg"
+        thumb = self.cache / "thumbs" / self.export_of[col] / arm / camera / f"{t_ns}.jpg"
         if not thumb.is_file():
             thumb.parent.mkdir(parents=True, exist_ok=True)
             with Image.open(src) as im:
@@ -415,11 +441,12 @@ def build_app(s: Session):
     from dash import ALL, Input, Output, State, ctx, dcc, html
     from flask import Response
 
-    app = dash.Dash(__name__, title=f"alpamayo eval: {s.export_name}")
+    export_names = "+".join(sorted(set(s.export_of.values())))
+    app = dash.Dash(__name__, title=f"alpamayo eval: {export_names}")
 
     # The export and run names are part of the URL so the browser cache can never hand a thumbnail
     # of one scene (or run) to a page showing another.
-    img_prefix = f"/img/{s.export_name}/{'-'.join(sorted(set(s.run_of.values())))}"
+    img_prefix = f"/img/{export_names}/{'-'.join(sorted(set(s.run_of.values())))}"
 
     @app.server.route(f"{img_prefix}/<col>/<camera>/<int:index>")
     def _img(col, camera, index):
@@ -447,7 +474,8 @@ def build_app(s: Session):
 
     def card(col):
         return html.Div(id={"type": "card", "col": col}, style=hidden, children=[
-            html.Div(f"{col}  ·  {s.run_of[col]}", style={"background": "#222", "color": "white", "padding": "3px 6px", "fontSize": "13px"}),
+            html.Div(f"{col}  ·  {s.run_of[col]}" + (f"  ·  {s.export_of[col]}" if len(set(s.export_of.values())) > 1 else ""),
+                     style={"background": "#222", "color": "white", "padding": "3px 6px", "fontSize": "13px"}),
             html.Div(style={"display": "flex", "flexWrap": "wrap"}, children=[
                 html.Img(id={"type": "img", "col": col, "slot": k}, src="", style=hidden) for k in range(MAX_SLOTS)
             ]),
@@ -467,7 +495,7 @@ def build_app(s: Session):
 
     # Identifies this server process and its scene. The page polls it (script below) and reloads itself
     # when it changes, so a tab left open across a restart never talks to a server it does not match.
-    page_token = f"{s.export_name}|{'-'.join(sorted(set(s.run_of.values())))}|{int(_time.time())}"
+    page_token = f"{export_names}|{'-'.join(sorted(set(s.run_of.values())))}|{int(_time.time())}"
 
     @app.server.after_request
     def _no_store(resp):  # the page, the layout and the callback registry are never served from the browser cache
@@ -498,7 +526,7 @@ def build_app(s: Session):
     app.layout = html.Div(style={"fontFamily": "sans-serif", "margin": "12px"}, children=[
         dcc.Store(id="page-token", data=page_token),
         html.Div(id="stale", children="", style={"display": "none"}),
-        html.H3(f"{s.manifest['scene']}  ·  export {s.export_name}  ·  runs {', '.join(sorted(set(s.run_of.values())))}", style={"margin": "4px 0"}),
+        html.H3(f"{s.manifest['scene']}  ·  export {export_names.replace('+', ', ')}  ·  runs {', '.join(sorted(set(s.run_of.values())))}", style={"margin": "4px 0"}),
         html.Div(style={"display": "flex", "gap": "18px", "alignItems": "center", "flexWrap": "wrap", "margin": "8px 0"}, children=[
             html.Button("▶ play", id="play", n_clicks=0, style={"width": "90px"}),
             html.Button("◀ step", id="back", n_clicks=0), html.Button("step ▶", id="fwd", n_clicks=0),
@@ -604,7 +632,8 @@ def build_app(s: Session):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("runs", nargs="+", help="Run locations (s3:// or local), all on the same export; the first is the reference.")
+    parser.add_argument("runs", nargs="+", help="Run locations (s3:// or local); the first is the reference. Runs on another export of the same scene are tagged by export name.")
+    parser.add_argument("--labels", nargs="+", default=None, help="One tag per run instead of the automatic seed / export tags (empty string = no tag), e.g. --labels '' v2")
     parser.add_argument("--port", type=int, default=8050)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--cache", type=Path, default=Path("~/.cache/alpamayo-eval").expanduser())
@@ -620,7 +649,7 @@ def main() -> int:
                 f"port {args.port} on {args.host} is already in use, probably another dashboard still running "
                 f"(the browser would keep showing THAT scene). Stop it with Ctrl-C in its terminal, or pass --port {args.port + 1}."
             )
-    session = Session(args.runs, args.cache)
+    session = Session(args.runs, args.cache, args.labels)
     print(f"loaded {len(session.instants)} instants, columns {list(session.columns)}; open http://{args.host}:{args.port}")
     build_app(session).run(host=args.host, port=args.port, debug=False)
     return 0

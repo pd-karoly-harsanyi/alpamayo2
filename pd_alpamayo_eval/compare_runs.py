@@ -54,25 +54,41 @@ def main() -> int:
     parser.add_argument("--reference", default="real", help="Arm of the first run used as reference (default: real).")
     parser.add_argument("--cache", type=Path, default=Path("~/.cache/alpamayo-eval").expanduser())
     parser.add_argument("--json", type=Path, default=None, help="Also write the table as JSON.")
+    parser.add_argument("--labels", nargs="+", default=None, help="One tag per run instead of the automatic seed / export / run-id tags, e.g. --labels old new")
     args = parser.parse_args()
 
     columns: dict[str, dict[int, dict]] = {}
     labels: dict[str, str] = {}
-    for i, run in enumerate(args.runs):
+    loaded = []
+    for run in args.runs:
         run_dir = _stage(run, args.cache)
         summary, records = _load_run(run_dir)
-        rid = summary.get("run_id", run_dir.name)
-        tag = f"seed{summary.get('seed')}" if summary.get("seed") is not None else rid[-8:]
+        loaded.append((summary.get("run_id", run_dir.name), summary, records))
+    if args.labels and len(args.labels) != len(loaded):
+        raise SystemExit(f"--labels needs one label per run ({len(loaded)} runs, {len(args.labels)} labels)")
+    # Tag = seed when that tells the runs apart; otherwise (same seed on another export, e.g. a newer
+    # render of the same clip) the export name; otherwise the run id.
+    seeds = [s.get("seed") for _, s, _ in loaded]
+    exports = [(s.get("export") or "").rstrip("/").rsplit("/", 1)[-1] for _, s, _ in loaded]
+    for i, (rid, summary, records) in enumerate(loaded):
+        if args.labels:
+            tag = args.labels[i]
+        elif seeds[i] is not None and seeds.count(seeds[i]) == 1:
+            tag = f"seed{seeds[i]}"
+        elif exports.count(exports[i]) == 1:
+            tag = exports[i]
+        else:
+            tag = rid[-8:]
         for (t0, arm), rec in records.items():
             if rec.get("pred_xyz") is None:
                 continue
             col = f"{arm}@{tag}"
             columns.setdefault(col, {})[t0] = rec
             labels[col] = rid
-    ref_col = f"{args.reference}@" + next(tag for col, tag in ((c, c.split('@')[1]) for c in columns) if col.startswith(args.reference + "@"))
+    ref_col = next(c for c in columns if c.startswith(args.reference + "@"))  # first run's reference arm
     ref = columns[ref_col]
     print(f"reference: {ref_col} ({labels[ref_col]}), {len(ref)} instants\n")
-    header = f"{'column':24s} {'n':>4s} {'pairedADE med':>14s} {'p90':>6s} {'dist diff med':>14s} {'longer':>7s} {'shorter':>8s} {'ADE vs GT med':>14s} {'text differs':>13s}"
+    header = f"{'column':34s} {'n':>4s} {'pairedADE med':>14s} {'p90':>6s} {'dist diff med':>14s} {'longer':>7s} {'shorter':>8s} {'ADE vs GT med':>14s} {'text differs':>13s}"
     print(header)
     print("-" * len(header))
     table = []
@@ -107,7 +123,7 @@ def main() -> int:
         }
         table.append(row)
         print(
-            f"{col:24s} {row['n']:4d} {row['paired_ade_median_m']:14.3f} {row['paired_ade_p90_m']:6.2f} "
+            f"{col:34s} {row['n']:4d} {row['paired_ade_median_m']:14.3f} {row['paired_ade_p90_m']:6.2f} "
             f"{row['distance_diff_median_m']:+14.2f} {row['longer_frac']:7.0%} {row['shorter_frac']:8.0%} "
             f"{(row['ade_vs_gt_median_m'] if row['ade_vs_gt_median_m'] is not None else float('nan')):14.3f} {row['text_differs_frac']:13.0%}"
         )
@@ -116,9 +132,9 @@ def main() -> int:
     if by_horizon:
         names = list(HORIZONS) + ["weighted"]
         print(f"\npaired ADE vs {ref_col} by horizon, median / p90 (m); 'weighted' = exp(-t/{WEIGHT_TAU_S:g} s) time weighting:")
-        print(f"{'column':24s}" + "".join(f"{n:>15s}" for n in names))
+        print(f"{'column':34s}" + "".join(f"{n:>15s}" for n in names))
         for col, vals in by_horizon.items():
-            print(f"{col:24s}" + "".join(f"{vals[n][0]:7.2f} /{vals[n][1]:6.2f}" for n in names))
+            print(f"{col:34s}" + "".join(f"{vals[n][0]:7.2f} /{vals[n][1]:6.2f}" for n in names))
         for row in table:
             row["by_horizon"] = by_horizon.get(row["column"])
     if args.json:
