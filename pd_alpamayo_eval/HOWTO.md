@@ -127,7 +127,8 @@ Reference = the first run's `real`. Per other column (arms of all runs; later ru
 predicted 6.4 s trajectory (median; share of instants longer / shorter by >1 m), ADE vs the recorded
 future, and how often the Chain-of-Causation sentence differs. `real@seed1` vs `real` is the floor;
 a replica effect is only a finding where it exceeds the floor, and the distance bias is the cleanest
-discriminator because seeds are symmetric and renders are not. Runs and exports are staged into
+discriminator because seeds are symmetric and renders are not. Runs that share a seed (an old and a
+new render of the same scene) are tagged by export name instead; `--labels old new` overrides. Runs and exports are staged into
 `~/.cache/alpamayo-eval` on first use (same cache as the dashboard and the video).
 
 ## 6. Look: the dashboard (laptop, dev env)
@@ -138,7 +139,10 @@ pixi run -e dev dashboard \
 ```
 
 then open http://localhost:8050 (one server shows one scene; start a second on `--port 8051` for
-another). All runs given must be on the same export; the first run's `real` is the reference.
+another). The first run's `real` is the reference. Further runs on the same export are tagged by
+seed (`real@seed1`); a run on ANOTHER export of the same scene (a newer render of the same clip,
+e.g. `italy_full_variations_v2`) is tagged by export name and its cards show that export's images,
+so old and new renders sit side by side on the same instant. `--labels '' v2` sets your own tags.
 
 - Slider over instants with play / pause / step, speed, and a time readout. Click the slider handle
   and the arrow keys step too.
@@ -162,7 +166,9 @@ pixi run -e dev make-video s3://pd-nebius-ray/alpamayo-eval/<export>/runs/<run i
 ```
 
 One frame per instant: a tile per arm (frame at t0, bird's-eye plot with the FOV inset, text) and a
-per-arm error strip with a cursor. ~10 min per scene; `outputs/` is gitignored.
+per-arm error strip with a cursor. ~10 min per scene; `outputs/` is gitignored. Always pass `--out`
+with a distinct name per run (`<scene>_<export>_<run suffix>.mp4`), so a re-render of a scene never
+overwrites last week's video.
 
 ## 8. Where things are
 
