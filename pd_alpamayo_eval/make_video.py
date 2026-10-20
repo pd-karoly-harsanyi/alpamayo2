@@ -37,8 +37,27 @@ from pd_alpamayo_eval.export_common import MANIFEST_NAME, NUM_FUTURE_STEPS, STEP
 from pd_alpamayo_eval.load_export import EgoTrajectory  # noqa: E402
 from pd_alpamayo_eval.s3util import NEBIUS_BUCKET, client, download_prefix, is_s3, parse_s3  # noqa: E402
 
-ARM_COLORS = {"real": "#2ca02c", "rendered": "#ff7f0e"}
-EXTRA_COLORS = ["#9467bd", "#17becf", "#bcbd22", "#8c564b", "#e377c2"]  # no red: red is the time cursor
+ARM_COLORS = {"real": "#2ca02c", "rendered": "#ff7f0e", "rendered_rainy": "#1f77b4", "rendered_snowy": "#9467bd"}
+EXTRA_COLORS = ["#17becf", "#bcbd22", "#8c564b", "#e377c2"]  # no red: red is the time cursor
+
+
+def _shade(hex_color: str, factor: float) -> str:
+    """Darken (factor < 1) or lighten (factor > 1) an ``#rrggbb`` colour, staying in gamut."""
+    r, g, b = (int(hex_color[i : i + 2], 16) for i in (1, 3, 5))
+    if factor <= 1:
+        r, g, b = (int(c * factor) for c in (r, g, b))
+    else:
+        r, g, b = (int(c + (255 - c) * (1 - 1 / factor)) for c in (r, g, b))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def column_color(arm: str, run_index: int, extra: dict[str, str] | None = None) -> str:
+    """Colour of a dashboard column: one hue per arm (real green, rendered orange, rainy blue, snowy
+    purple), and a darker shade of that hue for every further run of the same arm (run 1: 0.65 x,
+    run 2: 0.42 x, ...), so ``rendered`` and ``rendered@v2`` are the same family but never the same line.
+    ``extra`` maps arms outside ARM_COLORS to colours (filled on first use by the caller)."""
+    base = ARM_COLORS.get(arm) or (extra or {}).get(arm) or "#7f7f7f"
+    return base if run_index == 0 else _shade(base, max(0.3, 0.65**run_index))
 CAMERA_LABELS = {
     "camera_cross_left_120fov": "cross left",
     "camera_front_wide_120fov": "front wide",

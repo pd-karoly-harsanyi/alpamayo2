@@ -52,12 +52,19 @@ def _wade(a: np.ndarray, b: np.ndarray) -> float:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("runs", nargs="+", help="Run locations (s3:// or local); the first run's `real` is the reference.")
+    parser.add_argument("runs", nargs="*", help="Run locations (s3:// or local); the first run's `real` is the reference.")
+    parser.add_argument("--scene", default=None, help="Instead of run locations: a scene name from registry.py (italy, madrid, austria).")
     parser.add_argument("--reference", default="real", help="Arm of the first run used as reference (default: real).")
     parser.add_argument("--cache", type=Path, default=Path("~/.cache/alpamayo-eval").expanduser())
     parser.add_argument("--json", type=Path, default=None, help="Also write the table as JSON.")
     parser.add_argument("--labels", nargs="+", default=None, help="One tag per run instead of the automatic seed / export / run-id tags, e.g. --labels old new")
     args = parser.parse_args()
+    if args.scene:
+        from pd_alpamayo_eval.registry import scene_runs
+
+        args.runs, args.labels = scene_runs(args.scene)
+    if not args.runs:
+        raise SystemExit("give run locations or --scene <name>")
 
     columns: dict[str, dict[int, dict]] = {}
     labels: dict[str, str] = {}
@@ -84,10 +91,10 @@ def main() -> int:
         for (t0, arm), rec in records.items():
             if rec.get("pred_xyz") is None:
                 continue
-            col = f"{arm}@{tag}"
+            col = f"{arm}@{tag}" if tag else arm
             columns.setdefault(col, {})[t0] = rec
             labels[col] = rid
-    ref_col = next(c for c in columns if c.startswith(args.reference + "@"))  # first run's reference arm
+    ref_col = next(c for c in columns if c == args.reference or c.startswith(args.reference + "@"))  # first run's reference arm
     ref = columns[ref_col]
     print(f"reference: {ref_col} ({labels[ref_col]}), {len(ref)} instants\n")
     header = f"{'column':34s} {'n':>4s} {'pairedADE med':>14s} {'p90':>6s} {'dist diff med':>14s} {'longer':>7s} {'shorter':>8s} {'ADE vs GT med':>14s} {'text differs':>13s}"

@@ -123,6 +123,7 @@ pixi run -e launch submit-nebius run --wait --forward-nebius-credentials -- \
 ## 5. Numbers: compare-runs (laptop, dev env)
 
 ```
+pixi run -e dev compare-runs --scene italy       # runs from registry.py
 pixi run -e dev compare-runs s3://pd-nebius-ray/alpamayo-eval/<export>/runs/<run A> [s3://.../runs/<run B> ...]
 ```
 
@@ -138,18 +139,23 @@ new render of the same scene) are tagged by export name instead; `--labels old n
 ## 6. Look: the dashboard (laptop, dev env)
 
 ```
+pixi run -e dev dashboard --scene italy          # or madrid, austria: reference run, v2 run, seed floor
 pixi run -e dev dashboard \
   s3://pd-nebius-ray/alpamayo-eval/<export>/runs/<run A> [s3://.../runs/<run B> ...] [--port 8050]
 ```
 
 then open http://localhost:8050 (one server shows one scene; start a second on `--port 8051` for
-another). The first run's `real` is the reference. Further runs on the same export are tagged by
+another). Nothing is rerun: the dashboard reads the stored results, staged into the laptop cache on
+first use. `--scene` takes the run list from `pd_alpamayo_eval/registry.py`; add a row there when a
+new run lands. The first run's `real` is the reference. Further runs on the same export are tagged by
 seed (`real@seed1`); a run on ANOTHER export of the same scene (a newer render of the same clip,
 e.g. `italy_full_variations_v2`) is tagged by export name and its cards show that export's images,
 so old and new renders sit side by side on the same instant. `--labels '' v2` sets your own tags.
 
 - Slider over instants with play / pause / step, speed, and a time readout. Click the slider handle
   and the arrow keys step too.
+- Colours: one hue per arm (real green, rendered orange, rainy blue, snowy purple); further runs of the
+  same arm (`@v2`, `@seed1`) use darker shades of that hue.
 - One card per arm in a single row that fills the window (tick the arms you want): camera frame(s)
   at t0 with the paths projected onto them (reference prediction faint green, the arm's prediction
   thick in its colour, recorded future dashed black; the bird's-eye legend names them), the model's

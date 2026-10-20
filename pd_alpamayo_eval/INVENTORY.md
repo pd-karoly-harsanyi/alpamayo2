@@ -35,16 +35,14 @@ any scene with other variation types (the Madrid source bundle has 4 baked).
 ### Re-inspect without rerunning
 
 ```
-# numbers (reference = first run's real):
-pixi run -e dev compare-runs <run A> <run B> ... [--labels a b ...] [--reference rendered]
-# dashboard, old vs new render + floor, e.g. Italy:
-pixi run -e dev dashboard \
-  s3://pd-nebius-ray/alpamayo-eval/full_variations/runs/alpamayo-run-27f93c3e \
-  s3://pd-nebius-ray/alpamayo-eval/italy_full_variations_v2/runs/alpamayo-run-928b4727 \
-  s3://pd-nebius-ray/alpamayo-eval/full_variations/runs/alpamayo-run-af7ff7bc --labels '' v2 seed1
-# Madrid: madrid_full_variations/runs/alpamayo-run-e368b20f, madrid_full_variations_v2/runs/alpamayo-run-99bb841a, .../alpamayo-run-e6d4f80e
-# Austria: austria_full_variations/runs/alpamayo-run-17c45f0a, austria_full_variations_v2/runs/alpamayo-run-9fc99df6, .../alpamayo-run-b357ae61
+pixi run -e dev dashboard --scene italy        # or madrid, austria: reference run + v2 run + seed floor, from registry.py
+pixi run -e dev compare-runs --scene italy     # the numbers for the same three runs
+# any other combination: give run locations, e.g.
+pixi run -e dev dashboard s3://pd-nebius-ray/alpamayo-eval/<export>/runs/<run id> [...] [--labels a b ...]
 ```
+
+The scene -> runs mapping lives in `registry.py` (same ids as the table above); add a row there when a
+new run lands so `--scene` picks it up.
 
 Videos of every run with all four arms are in `~/workspace/alpamayo2/outputs/` (list at the bottom).
 

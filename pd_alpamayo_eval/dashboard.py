@@ -1,5 +1,6 @@
 """Interactive dashboard for inspecting runs: instant slider, arms side by side, plotly plots.
 
+    pixi run -e dev dashboard --scene italy            # runs listed in registry.py: reference, v2, seed floor
     pixi run -e dev dashboard s3://pd-nebius-ray/alpamayo-eval/full_variations/runs/alpamayo-run-27f93c3e \\
         [s3://pd-nebius-ray/alpamayo-eval/full_variations/runs/alpamayo-run-af7ff7bc ...] [--port 8050]
 
@@ -40,6 +41,7 @@ from pd_alpamayo_eval.make_video import (  # noqa: E402
     FRUSTUM_LENGTH_M,
     _camera_frustums,
     _cot_text,
+    column_color,
     cot_differs,
     _load_run,
     _stage,
@@ -138,6 +140,7 @@ class Session:
         self.arm_of: dict[str, str] = {}
         self.run_of: dict[str, str] = {}
         self.export_dir_of: dict[str, Path] = {}  # per column: where its images live
+        self.run_index_of: dict[str, int] = {}  # per column: 0 = reference run, 1, 2, ... = further runs (colour shade)
         self.export_of: dict[str, str] = {}  # per column: export name
         export_uri = None
         export_dirs: dict[str, Path] = {}
@@ -171,6 +174,7 @@ class Session:
                 self.run_of[col] = summary.get("run_id", run_dir.name)
                 self.export_dir_of[col] = export_dirs[run_export]
                 self.export_of[col] = name
+                self.run_index_of[col] = i
         self.export_dir = export_dirs[export_uri]
         self.manifest = read_manifest(self.export_dir)
         for other_uri, other_dir in export_dirs.items():  # a second export must sit on the same t0 grid (same clip, same pose log)
@@ -190,9 +194,13 @@ class Session:
         order = [self.reference] + [c for c in self.columns if c != self.reference]
         self.columns = {c: self.columns[c] for c in order}
         self.colors = {}
+        extra_arms: dict[str, str] = {}
         extra = iter(EXTRA_COLORS)
         for col in self.columns:
-            self.colors[col] = ARM_COLORS.get(col, next(extra, "#7f7f7f"))
+            arm = self.arm_of[col]
+            if arm not in ARM_COLORS and arm not in extra_arms:
+                extra_arms[arm] = next(extra, "#7f7f7f")
+            self.colors[col] = column_color(arm, self.run_index_of[col], extra_arms)
         self._series()
         self.export_name = export_uri.rstrip("/").rsplit("/", 1)[-1]
         self.projectors = {}
@@ -479,8 +487,11 @@ def build_app(s: Session):
 
     def card(col):
         return html.Div(id={"type": "card", "col": col}, style=hidden, children=[
+            # One line, clipped with an ellipsis (hover for the full text), so a long header never shifts the card.
             html.Div(f"{col}  ·  {s.run_of[col]}" + (f"  ·  {s.export_of[col]}" if len(set(s.export_of.values())) > 1 else ""),
-                     style={"background": "#222", "color": "white", "padding": "3px 6px", "fontSize": "13px"}),
+                     title=f"{col}  ·  {s.run_of[col]}  ·  {s.export_of[col]}",
+                     style={"background": "#222", "color": "white", "padding": "3px 6px", "fontSize": "13px", "whiteSpace": "nowrap",
+                            "overflow": "hidden", "textOverflow": "ellipsis", "height": "22px", "boxSizing": "border-box"}),
             html.Div(style={"display": "flex", "flexWrap": "wrap"}, children=[
                 html.Img(id={"type": "img", "col": col, "slot": k}, src="", style=hidden) for k in range(MAX_SLOTS)
             ]),
@@ -638,7 +649,8 @@ def build_app(s: Session):
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("runs", nargs="+", help="Run locations (s3:// or local); the first is the reference. Runs on another export of the same scene are tagged by export name.")
+    parser.add_argument("runs", nargs="*", help="Run locations (s3:// or local); the first is the reference. Runs on another export of the same scene are tagged by export name.")
+    parser.add_argument("--scene", default=None, help="Instead of run locations: a scene name from registry.py (italy, madrid, austria) = that scene's reference run, v2 run and seed floor.")
     parser.add_argument("--labels", nargs="+", default=None, help="One tag per run instead of the automatic seed / export tags (empty string = no tag), e.g. --labels '' v2")
     parser.add_argument("--port", type=int, default=8050)
     parser.add_argument("--host", default="127.0.0.1")
@@ -655,6 +667,12 @@ def main() -> int:
                 f"port {args.port} on {args.host} is already in use, probably another dashboard still running "
                 f"(the browser would keep showing THAT scene). Stop it with Ctrl-C in its terminal, or pass --port {args.port + 1}."
             )
+    if args.scene:
+        from pd_alpamayo_eval.registry import scene_runs
+
+        args.runs, args.labels = scene_runs(args.scene)
+    if not args.runs:
+        raise SystemExit("give run locations or --scene <name>")
     session = Session(args.runs, args.cache, args.labels)
     print(f"loaded {len(session.instants)} instants, columns {list(session.columns)}; open http://{args.host}:{args.port}")
     build_app(session).run(host=args.host, port=args.port, debug=False)
