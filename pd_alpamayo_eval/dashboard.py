@@ -46,6 +46,7 @@ from pd_alpamayo_eval.make_video import (  # noqa: E402
 )
 
 THUMB_W = 960
+TXT_LINES = 3  # height of the model-reasoning box, in lines; longer sentences are clipped with an ellipsis
 # Paired-ADE horizons selectable in the dashboard: steps of the 6.4 s prediction, None = time-weighted.
 HORIZONS = {"1 s": 10, "2 s": 20, "3 s": 30, "6.4 s": 64, "weighted (exp, 2 s)": None}
 HORIZON_W = np.exp(-np.arange(1, 65) * 0.1 / 2.0)
@@ -468,10 +469,13 @@ def build_app(s: Session):
     # That keeps images and plots mounted: a new src shows the old picture until the new one has
     # decoded, and a new figure redraws in place, so nothing blinks while stepping.
     def _txt_style(differs: bool) -> dict:
-        # 1 px grey or 2 px red border on a 1 px margin, so the box keeps its size either way.
+        # Fixed height of three lines, so a long sentence never pushes the plots below it; the box is
+        # clipped with an ellipsis (hover shows the whole sentence). 1 px grey or 2 px red border on
+        # a 1 px margin, so the box keeps its size either way.
         return {"margin": "2px 8px 4px", "padding": "4px 6px", "fontSize": "12px", "lineHeight": "1.3", "background": "white",
-                "minHeight": "34px", "border": "2px solid #d62728" if differs else "1px solid #999",
-                "boxSizing": "border-box"}
+                "height": f"{TXT_LINES * 12 * 1.3 + 2 * 4 + 2 * 2:.0f}px", "border": "2px solid #d62728" if differs else "1px solid #999",
+                "boxSizing": "border-box", "overflow": "hidden", "display": "-webkit-box", "WebkitLineClamp": str(TXT_LINES),
+                "WebkitBoxOrient": "vertical"}
 
     def card(col):
         return html.Div(id={"type": "card", "col": col}, style=hidden, children=[
@@ -599,7 +603,8 @@ def build_app(s: Session):
             bevs.append(fig)
             text = _cot_text(rec) if rec else ""
             differs = bool(rec and ref and col != s.reference and cot_differs(_cot_text(rec), _cot_text(ref)))
-            txts.append(text or ("(no output)" if rec else "not available for this instant"))
+            shown = text or ("(no output)" if rec else "not available for this instant")
+            txts.append(html.Span(shown, title=shown))  # full sentence on hover when the box clips it
             txt_styles.append(_txt_style(differs))
             mets.append(metrics_table(s, col, idx))
             tl = card_timeline_figure(s, col, idx, horizon)
