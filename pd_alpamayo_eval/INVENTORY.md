@@ -1,7 +1,52 @@
-# Inventory of generated data (as of 2026-10-19)
+# Inventory of experiments and generated data (as of 2026-10-20)
 
-Everything below exists and can be reused without rerunning anything. Paths are exact.
-Recipe for producing more: `HOWTO.md`. Findings: `../PD_EVAL_PLAN.md`.
+**Check this file before submitting a job.** Everything below exists and can be re-inspected without
+rerunning anything; a model run costs ~1 GPU-hour and 35-55 min of waiting. Paths are exact.
+Recipe for producing more: `HOWTO.md`. Findings and tables: `../PD_EVAL_PLAN.md`.
+
+## Experiments already run
+
+One row per (scene, render version, arms, seed). "v1" = first replica training (2026-10-13/14),
+"v2" = improved replica training (2026-10-19). All runs: Alpamayo 2 Super, 1 trajectory sample,
+10 diffusion steps, whole 20 s clip, every 0.1 s instant. Results stay in the bucket; the laptop cache
+`~/.cache/alpamayo-eval` holds a staged copy of everything.
+
+| # | scene | replica | arms | seed | run id | export (Nebius) | date | finding (one line) |
+|---|---|---|---|---|---|---|---|---|
+| 1 | Italy tram street | v1 | real, rendered, rainy, snowy | 42 | `alpamayo-run-27f93c3e` | `full_variations` | 10-13 | render paired ADE 1.14 / 5.78 m; drives +2.6 m longer on 68 % |
+| 2 | Italy tram street | v1 | real only | 1 | `alpamayo-run-af7ff7bc` | `full_variations` | 10-13 | seed floor 0.95 / 2.27 m, symmetric |
+| 3 | Madrid intersection | v1 | real, rendered, rainy, snowy | 42 | `alpamayo-run-e368b20f` | `madrid_full_variations` | 10-14 | render 2.38 / 7.65 m, symmetric distance |
+| 4 | Austria roundabout | v1 | real, rendered, rainy, snowy | 42 | `alpamayo-run-17c45f0a` | `austria_full_variations` | 10-14 | render 0.73 / 4.01 m; drives -1.0 m shorter on 50 % |
+| 5 | Italy tram street | v2 | real, rendered, rainy, snowy | 42 | `alpamayo-run-928b4727` | `italy_full_variations_v2` | 10-19 | 1.18 / 5.55 m; unchanged vs v1; real arm bit-identical to #1 |
+| 6 | Austria roundabout | v2 | real, rendered, rainy, snowy | 42 | `alpamayo-run-9fc99df6` | `austria_full_variations_v2` | 10-19 | 0.92 / 4.07 m; unchanged vs v1; real arm bit-identical to #4 |
+| 7 | Madrid intersection | v2 | real, rendered, rainy, snowy | 42 | `alpamayo-run-99bb841a` | `madrid_full_variations_v2` | 10-19 | 2.08 / 7.08 m; inside the Madrid floor; real arm bit-identical to #3 |
+| 8 | Madrid intersection | v2 | real only | 1 | `alpamayo-run-e6d4f80e` | `madrid_full_variations_v2` | 10-19 | seed floor 2.29 / 7.65 m, lopsided (-2.9 m): bimodal stop/go |
+| 9 | Austria roundabout | v2 | real only | 1 | `alpamayo-run-b357ae61` | `austria_full_variations_v2` | 10-20 | seed floor 1.39 / 3.69 m, symmetric; `99460be7` = identical duplicate |
+| 0 | Italy 5-8 s window | v1 (no variations) | real, rendered | 42 | `alpamayo-run-0d74dd90` | `w5s_3s` | 10-13 | first end-to-end test only |
+
+Because the real arm is deterministic for a given seed (#5 = #1, #6 = #4, #7 = #3, #9 duplicate), a
+seed-42 real run exists for every scene and a seed-1 real run for every scene; **no further real-arm
+run is needed for seeds 1 or 42 on any of the three clips**, whatever the export version.
+
+NOT run yet (each would be new): any seed other than 1 / 42; `--num-traj-samples > 1`; meta-action
+text task; blind / camera-ablation tests; nav-text CFG; any scene other than these three; v2 Madrid or
+any scene with other variation types (the Madrid source bundle has 4 baked).
+
+### Re-inspect without rerunning
+
+```
+# numbers (reference = first run's real):
+pixi run -e dev compare-runs <run A> <run B> ... [--labels a b ...] [--reference rendered]
+# dashboard, old vs new render + floor, e.g. Italy:
+pixi run -e dev dashboard \
+  s3://pd-nebius-ray/alpamayo-eval/full_variations/runs/alpamayo-run-27f93c3e \
+  s3://pd-nebius-ray/alpamayo-eval/italy_full_variations_v2/runs/alpamayo-run-928b4727 \
+  s3://pd-nebius-ray/alpamayo-eval/full_variations/runs/alpamayo-run-af7ff7bc --labels '' v2 seed1
+# Madrid: madrid_full_variations/runs/alpamayo-run-e368b20f, madrid_full_variations_v2/runs/alpamayo-run-99bb841a, .../alpamayo-run-e6d4f80e
+# Austria: austria_full_variations/runs/alpamayo-run-17c45f0a, austria_full_variations_v2/runs/alpamayo-run-9fc99df6, .../alpamayo-run-b357ae61
+```
+
+Videos of every run with all four arms are in `~/workspace/alpamayo2/outputs/` (list at the bottom).
 
 ## Scenes, bundles, artifacts (pdncc registry, AWS bucket `paralleldomain-pipeline`)
 

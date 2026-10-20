@@ -89,6 +89,10 @@ The replipair artifact uid is printed by the exporter (`replipair s3://...`). Us
 
 ## 4. Run the model on the cluster (laptop submits, cluster runs)
 
+First check `INVENTORY.md` ("Experiments already run"): if the (scene, replica version, arms, seed)
+combination is listed, the results are in the bucket and staged in `~/.cache/alpamayo-eval`; use
+them. The real arm is deterministic per seed, so it never needs rerunning for a seed already listed.
+
 ```
 cd ~/workspace/alpamayo2
 pixi run -e launch submit-nebius run --wait --forward-nebius-credentials -- \
