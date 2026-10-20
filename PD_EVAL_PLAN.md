@@ -362,7 +362,25 @@ are one-sided on Italy (+2.3 to +2.6 m, ~70 % longer vs ~15 % shorter) and Austr
 ~50 % shorter vs ~18 % longer) in BOTH render versions. So on Italy and Austria the reconstruction
 shifts the model's speed in a consistent direction that sampling noise never produces, the quality
 pass did not change that, and ADE is the wrong instrument to see it (it is swamped by symmetric
-sampling noise on every scene). For the eye: the
+sampling noise on every scene).
+
+**Shift vs spread (2026-10-20).** Decomposing the 6.4 s predicted distance, arm minus real, per instant
+(same seed): the per-instant spread is the sampling noise, the mean is the systematic render effect.
+
+| scene, arm | mean shift | spread (std) | t | sign test p |
+|---|---|---|---|---|
+| Italy rendered old / new | +3.9 / +3.8 m | 5.8 / 6.0 m | +9.0 / +8.4 | 1e-14 / 1e-12 |
+| Italy real seed 1 | -0.2 m | 3.6 m | -0.8 | n.s. |
+| Austria rendered old / new | -1.9 / -1.9 m | 5.1 / 5.8 m | -5.0 / -4.5 | 1e-7 / 1e-7 |
+| Austria real seed 1 | -0.2 m | 5.4 m | -0.6 | n.s. |
+| Madrid rendered old / new | +2.6 / +2.0 m | 11.3 / 10.4 m | +3.1 / +2.7 | n.s. |
+| Madrid real seed 1 | -5.8 m | 10.0 m | -7.9 | 2e-3 |
+
+Per instant, noise dominates (spread > shift everywhere), which is why unsigned ADE reads "noise". Over
+the clip the shift is unambiguous on Italy and Austria (t 5-9, identical in both render versions) and
+absent for a seed re-roll (t < 1). Madrid's seed re-roll itself shifts the mean by 6 m (bimodal
+stop-vs-go), so Madrid is unmeasurable with one sample per instant. A gate therefore tests the signed
+shift over many instants (or many samples per instant), not the per-instant ADE. For the eye: the
 sentence differs from the old render on 36-42 % of instants (vs 70 % between seeds), consistent
 with (1). Videos: `outputs/italy_full_variations_v2_928b4727.mp4`,
 `outputs/austria_full_variations_v2_9fc99df6.mp4`, `outputs/madrid_full_variations_v2_99bb841a.mp4`;
