@@ -8,7 +8,9 @@ Every run's arms become columns ``<arm>@<run id suffix>``; the first run's ``rea
 reference. For each other column it prints, over the instants present in both: paired ADE against
 the reference (median / p90), the signed difference in distance covered by the predicted 6.4 s
 trajectory (median, and the share of instants longer / shorter by more than 1 m), ADE against the
-recorded future where available, and how often the Chain-of-Causation sentence differs.
+recorded future where available, and how often the Chain-of-Causation sentence differs materially
+(``cot_differs``: punctuation, case and filler ignored; any decision word change counts; otherwise
+less than half the content words in common).
 
 The point: ``real@seed1`` vs ``real@seed42`` is the seed-to-seed noise floor; ``rendered@seed42``
 vs ``real@seed42`` is the replica effect. A replica effect that is not larger than the floor, or
@@ -25,7 +27,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from pd_alpamayo_eval.make_video import _cot_text, _load_run, _stage  # noqa: E402
+from pd_alpamayo_eval.make_video import _cot_text, _load_run, _stage, cot_differs  # noqa: E402
 
 
 def _end_distance(pred: np.ndarray) -> float:
@@ -108,7 +110,7 @@ def main() -> int:
         by_horizon[col]["weighted"] = (float(np.median(wv)), float(np.percentile(wv, 90)))
         dist = np.array([_end_distance(recs[t]["pred_xyz"]) - _end_distance(ref[t]["pred_xyz"]) for t in common])
         gt = [recs[t]["min_ade_vs_gt_m"] for t in common if recs[t].get("min_ade_vs_gt_m") is not None]
-        text = np.mean([_cot_text(recs[t]) != _cot_text(ref[t]) for t in common])
+        text = np.mean([cot_differs(_cot_text(recs[t]), _cot_text(ref[t])) for t in common])
         row = {
             "column": col,
             "run_id": labels[col],

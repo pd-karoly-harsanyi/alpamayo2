@@ -336,6 +336,56 @@ def _cot_text(rec: dict | None) -> str:
     return text.strip("'\" ")
 
 
+# Words that carry the driving decision. A change in the action words, or in the direction attached to
+# the action, counts as a different reasoning even when the rest of the sentence is the same.
+ACTION_WORDS = frozenset(
+    "stop stopping stopped slow slowing slower decelerate brake braking yield wait waiting accelerate "
+    "accelerating speed faster proceed continue maintain keep nudge merge merging overtake overtaking "
+    "pass passing turn turning change changing reverse pull park".split()
+)
+DIRECTION_WORDS = ("left", "right", "straight")
+# Filler that only jitters between samples of the same sentence.
+_FILLER = frozenset("a an the to of on in at for and or due because with by from is are be as it its this that there".split())
+
+
+def _tokens(text: str) -> list[str]:
+    import re
+
+    return re.findall(r"[a-z0-9]+", text.lower())
+
+
+def cot_words(text: str) -> set[str]:
+    """Lower-cased content words of a sentence: no punctuation, no articles/prepositions."""
+    return {w for w in _tokens(text) if w not in _FILLER}
+
+
+def cot_decision(text: str) -> tuple[tuple[str, ...], str | None]:
+    """(action words in order, first direction word): 'Nudge left due to a car on the right' -> (('nudge',), 'left')."""
+    toks = _tokens(text)
+    actions = tuple(w for w in toks if w in ACTION_WORDS)
+    direction = next((w for w in toks if w in DIRECTION_WORDS), None)
+    return actions, direction
+
+
+def cot_differs(a: str, b: str, min_overlap: float = 0.5) -> bool:
+    """True when two Chain-of-Causation sentences say something materially different.
+
+    Punctuation, case and filler words are ignored ('an open car door.' == 'the open car door'). A change in
+    the action words (stop/slow/accelerate/nudge/yield/...) or in the direction attached to them
+    (left/right/straight) always counts. Otherwise the sentences differ only when their content words
+    overlap by less than ``min_overlap`` (Jaccard), so a reworded reason for the same action
+    ('parked car' vs 'open car door') does not.
+    """
+    if cot_decision(a) != cot_decision(b):
+        return True
+    wa, wb = cot_words(a), cot_words(b)
+    if wa == wb:
+        return False
+    if not wa or not wb:
+        return True
+    return len(wa & wb) / len(wa | wb) < min_overlap
+
+
 def _font(size: int):
     from PIL import ImageFont
 
@@ -394,7 +444,7 @@ def _tile(
     tile.paste(Image.fromarray(bev).resize((TILE_W, BEV_H)), (0, y))
     y += BEV_H
     text = _cot_text(rec) if rec else ("(no output)" if available else "")
-    differs = bool(ref and rec and ref is not rec and _cot_text(ref) != _cot_text(rec))
+    differs = bool(ref and rec and ref is not rec and cot_differs(_cot_text(ref), _cot_text(rec)))
     draw.rectangle([PAD, y + 4, TILE_W - PAD, y + TEXT_H - 4], fill="white", outline="#d62728" if differs else "#999999", width=3 if differs else 1)
     lines = textwrap.wrap(str(text), width=68)[:4]
     for i, line in enumerate(lines):

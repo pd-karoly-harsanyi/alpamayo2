@@ -40,6 +40,7 @@ from pd_alpamayo_eval.make_video import (  # noqa: E402
     FRUSTUM_LENGTH_M,
     _camera_frustums,
     _cot_text,
+    cot_differs,
     _load_run,
     _stage,
 )
@@ -239,7 +240,7 @@ class Session:
                 g = partial_gts[t0]
                 gtp.append(float(np.linalg.norm(rec["pred_xyz"][0, : len(g), :2] - g[:, :2], axis=-1).mean()) if (ok and g is not None and rec.get("min_ade_vs_gt_m") is None) else np.nan)
                 end.append(float(np.linalg.norm(rec["pred_xyz"][0, -1, :2])) if ok else np.nan)
-                diff.append(float(_cot_text(rec) != _cot_text(r)) if (rec and r) else np.nan)
+                diff.append(float(cot_differs(_cot_text(rec), _cot_text(r))) if (rec and r) else np.nan)
             self.paired[col] = np.array(paired)
             for h in HORIZONS:
                 self.paired_h.setdefault(h, {})[col] = np.array(per_h[h])
@@ -481,7 +482,7 @@ def build_app(s: Session):
             ]),
             # Text directly under the image: the eye goes image -> sentence without crossing the plot.
             html.Div(html.B("model reasoning"), title="Chain-of-Causation: the sentence the model generated from these cameras before sampling the trajectory"
-                     + (f". Red border: differs from the {s.reference} arm." if col != s.reference else ""),
+                     + (f". Red border: says something materially different from the {s.reference} arm (a changed decision word such as left/right/stop/slow, or less than half the content words in common; punctuation and wording jitter are ignored)." if col != s.reference else ""),
                      style={"margin": "3px 8px 0", "fontSize": "11px", "color": "#444"}),
             html.Div(id={"type": "txt", "col": col}, children="", style=_txt_style(False)),
             dcc.Graph(id={"type": "bev", "col": col}, figure={}, config={"displayModeBar": False, "responsive": True}, style={"width": "100%", "height": f"{BEV_H}px"}),
@@ -597,7 +598,7 @@ def build_app(s: Session):
             fig.update_layout(uirevision="keep")
             bevs.append(fig)
             text = _cot_text(rec) if rec else ""
-            differs = bool(rec and ref and col != s.reference and _cot_text(rec) != _cot_text(ref))
+            differs = bool(rec and ref and col != s.reference and cot_differs(_cot_text(rec), _cot_text(ref)))
             txts.append(text or ("(no output)" if rec else "not available for this instant"))
             txt_styles.append(_txt_style(differs))
             mets.append(metrics_table(s, col, idx))

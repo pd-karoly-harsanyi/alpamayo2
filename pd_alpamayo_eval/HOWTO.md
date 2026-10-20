@@ -149,7 +149,7 @@ so old and new renders sit side by side on the same instant. `--labels '' v2` se
 - One card per arm in a single row that fills the window (tick the arms you want): camera frame(s)
   at t0 with the paths projected onto them (reference prediction faint green, the arm's prediction
   thick in its colour, recorded future dashed black; the bird's-eye legend names them), the model's
-  sentence right under the image (red box when it differs from the reference), a bird's-eye plot (equal
+  sentence right under the image (red box when it says something materially different from the reference: a changed action or direction word, or less than half the content words in common; punctuation and wording jitter are ignored), a bird's-eye plot (equal
   aspect, zoomable, camera FOV wedges around the ego with the shown camera in gold), the instant's ADE
   table, and that arm's error-over-time plot (click to jump; all on one scale).
 - Cameras dropdown: front wide, the front three, all six used, or any single camera.
@@ -190,6 +190,6 @@ run `alpamayo-run-99bb841a` + floor `alpamayo-run-e6d4f80e` (seed 1).
 ## 9. Tests
 
 `pixi run -e dev test-pd` runs the CPU contract tests of the loader (synthetic export, FLU/RFU
-conventions, timing, optional arms). The loader is `pd_alpamayo_eval/load_export.py`; it produces
+conventions, timing, optional arms) and of the sentence comparison behind the red text box. The loader is `pd_alpamayo_eval/load_export.py`; it produces
 exactly the dict NVIDIA's `load_physical_aiavdataset()` produces, and NVIDIA's code under
 `src/alpamayo2_super/` is unmodified.
