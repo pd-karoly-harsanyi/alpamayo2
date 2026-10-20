@@ -102,6 +102,10 @@ pixi run -e launch submit-nebius run --wait --forward-nebius-credentials -- \
 - `--forward-nebius-credentials` reads the local `nebius` profile and forwards the key as job env,
   pinned to the Nebius endpoint, like every pd-fm Nebius job. (The job spec is readable on the
   unauthenticated dashboard while the job record exists; the key is scoped to one bucket.)
+- Since 2026-10-20 every run also records the expert's attention over the images into the npz
+  (`attn_img`, `attn_layout`, `attn_mass`, `attn_image_mass`, ~100 KB per record; `--no-attention`
+  turns it off). The recording wraps the attention function and recomputes the softmax weights on the
+  side, so predictions are bit-identical with or without it (`tests/test_pd_attention.py`).
 - The worker uploads only the code tree (never data), builds NVIDIA's env from `uv.lock` on the pod
   (prebuilt flash-attn wheel, ~45 s warm / 2 min cold), stages the export onto the pod's local SSD,
   loads the model (28 s, 69 GiB), runs every instant x arm with ONE seed for all arms (common random
@@ -163,6 +167,13 @@ so old and new renders sit side by side on the same instant. `--labels '' v2` se
   aspect, zoomable, camera FOV wedges around the ego with the shown camera in gold), the instant's ADE
   table, and that arm's error-over-time plot (click to jump; all on one scale).
 - Cameras dropdown: front wide, the front three, all six used, or any single camera.
+- **Model attention** toggle (runs made after 2026-10-20 only): a heatmap of where the trajectory
+  expert attended on each image (its 64 trajectory tokens over the image patch tokens, last quarter of
+  the expert's layers, averaged over heads and diffusion steps; one colour scale per instant across all
+  24 input frames, so a bright camera is bright because it got more attention than the others), the
+  bird's-eye camera wedges shaded by each camera's share of the image attention (hover for the
+  percentage), and a table row with the attention mass on images / sentence / prompt. Runs without the
+  recording show the toggle greyed out.
 - Scene-level numbers are not on the dashboard; use `compare-runs` (section 5).
 - After pulling new code: restart the server AND hard-reload the tab (Ctrl-Shift-R). A stale tab gives
   `IndexError ... _prepare_grouping` 500s in the server log.
@@ -201,6 +212,8 @@ Austria `austria_full_variations_v2` run `alpamayo-run-9fc99df6` + floor `alpama
 ## 9. Tests
 
 `pixi run -e dev test-pd` runs the CPU contract tests of the loader (synthetic export, FLU/RFU
-conventions, timing, optional arms) and of the sentence comparison behind the red text box. The loader is `pd_alpamayo_eval/load_export.py`; it produces
+conventions, timing, optional arms), of the sentence comparison behind the red text box, and of the
+attention recorder (a tiny Qwen2 decoder on CPU: recorded weights equal transformers' eager attention,
+outputs unchanged; needs `transformers` in the dev env, same version as the model env). The loader is `pd_alpamayo_eval/load_export.py`; it produces
 exactly the dict NVIDIA's `load_physical_aiavdataset()` produces, and NVIDIA's code under
 `src/alpamayo2_super/` is unmodified.

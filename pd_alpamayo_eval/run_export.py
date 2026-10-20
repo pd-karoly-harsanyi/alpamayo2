@@ -18,6 +18,7 @@ timings, metrics) and ``<t0_ns>_<arm>.npz`` (predicted and GT xyz), appends a li
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import json
 import os
 import time
@@ -121,6 +122,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     torch.cuda.synchronize()
     summary["model_load_s"] = round(time.perf_counter() - t, 1)
     print(f"model loaded in {summary['model_load_s']} s", flush=True)
+    recorder = None
+    if args.save_attention:
+        from pd_alpamayo_eval.attention import ExpertAttentionRecorder
+
+        recorder = ExpertAttentionRecorder(model)
+        summary["attention"] = {"expert_attn_implementation": recorder.impl, "expert_layers": recorder.num_layers}
+        print(f"recording expert attention ({recorder.impl}, {recorder.num_layers} layers)", flush=True)
 
     preds: dict[tuple[int, str], np.ndarray] = {}
     with results_path.open("a", encoding="utf-8") as results_file:
@@ -140,7 +148,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     t = time.perf_counter()
                     torch.cuda.reset_peak_memory_stats()
                     torch.cuda.manual_seed_all(args.seed)
-                    with torch.autocast("cuda", dtype=torch.bfloat16):
+                    with torch.autocast("cuda", dtype=torch.bfloat16), (recorder.recording() if recorder else nullcontext()):
                         pred_xyz, _pred_rot, _logprob, extra = model.sample_trajectories_from_data(
                             data=model_inputs,
                             top_p=0.98,
@@ -157,6 +165,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     # extra["cot"] is an object array of shape (batch, sets, samples); one string per sample.
                     rec["cot"] = [str(c) for c in np.asarray(extra["cot"], dtype=object).reshape(-1).tolist()]
                     npz: dict[str, np.ndarray] = {"pred_xyz": pred}
+                    if recorder is not None:
+                        try:
+                            npz.update(recorder.summarize(model, model_inputs["tokenized_data"], data["camera_indices"],
+                                                          int(data["image_frames"].shape[1])))
+                            rec["attention_mass_late"] = [round(float(v), 4) for v in npz["attn_mass"][-json.loads(str(npz["attn_layout"]))["late_layers"]:].mean(0)]
+                        except Exception as exc:  # attention is best-effort; the prediction is already made
+                            rec["attention_error"] = f"{type(exc).__name__}: {exc}"
                     if data.get("ego_future_available"):
                         gt = data["ego_future_xyz"].cpu().numpy()[0, 0]
                         npz["gt_xyz"] = gt
@@ -240,6 +255,8 @@ def main() -> None:
     parser.add_argument("--diffusion-steps", type=int, default=10)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--save-viz", action="store_true", help="Also write NVIDIA's six-camera PNG per instant and arm.")
+    parser.add_argument("--no-attention", dest="save_attention", action="store_false",
+                        help="Do not record the expert's attention over the images (recorded by default into the npz: attn_img, attn_layout, attn_mass, attn_image_mass).")
     args = parser.parse_args()
     summary = run(args)
     printable = {k: v for k, v in summary.items() if k != "records"}

@@ -28,9 +28,11 @@ Because the real arm is deterministic for a given seed (#5 = #1, #6 = #4, #7 = #
 seed-42 real run exists for every scene and a seed-1 real run for every scene; **no further real-arm
 run is needed for seeds 1 or 42 on any of the three clips**, whatever the export version.
 
-NOT run yet (each would be new): any seed other than 1 / 42; `--num-traj-samples > 1`; meta-action
-text task; blind / camera-ablation tests; nav-text CFG; any scene other than these three; v2 Madrid or
-any scene with other variation types (the Madrid source bundle has 4 baked).
+NOT run yet (each would be new): any run WITH expert-attention recording (added 2026-10-20; none of
+the runs above has `attn_*` in its npz, so the dashboard's attention toggle is greyed out for them);
+any seed other than 1 / 42; `--num-traj-samples > 1`; meta-action text task; blind / camera-ablation
+tests; nav-text CFG; any scene other than these three; any scene with other variation types (the
+Madrid source bundle has 4 baked).
 
 ### Re-inspect without rerunning
 

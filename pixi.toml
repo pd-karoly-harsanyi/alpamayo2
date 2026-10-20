@@ -47,6 +47,7 @@ pandas = "*"
 # Headless browser for dashboard layout tests (PyPI package; conda-forge's "playwright" is the Node CLI).
 [feature.dev.pypi-dependencies]
 playwright = ">=1.40"
+transformers = "==4.57.1"  # same as the model env (uv.lock); for the CPU test of the attention capture
 
 [environments]
 default = { solve-group = "default" }
@@ -60,7 +61,7 @@ submit-nebius = "python scripts/submit_nebius.py"
 mirror-export = "python pd_alpamayo_eval/mirror_export.py"
 
 [tasks.test-pd]
-cmd = "pytest -q tests/test_pd_load_export.py tests/test_pd_cot_differs.py"
+cmd = "pytest -q tests/test_pd_load_export.py tests/test_pd_cot_differs.py tests/test_pd_attention.py"
 env = { PYTHONPATH = "src:." }
 
 # Side-by-side video of a run: `pixi run -e dev make-video s3://pd-nebius-ray/alpamayo-eval/<name>/runs/<id>`

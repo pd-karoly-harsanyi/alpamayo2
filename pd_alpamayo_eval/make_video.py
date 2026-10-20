@@ -132,6 +132,8 @@ def _load_run(run_dir: Path) -> tuple[dict, dict[tuple[int, str], dict]]:
             with np.load(npz_path) as npz:
                 rec["pred_xyz"] = npz["pred_xyz"]
                 rec["gt_xyz"] = npz["gt_xyz"] if "gt_xyz" in npz else None
+                for name in ("attn_img", "attn_layout", "attn_mass", "attn_image_mass"):  # expert attention, if recorded
+                    rec[name] = npz[name] if name in npz else None
         records[key] = rec
     return summary, records
 

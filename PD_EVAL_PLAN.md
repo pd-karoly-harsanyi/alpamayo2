@@ -150,6 +150,11 @@ ADE cannot separate render from seed, the signed speed bias can), the dashboard 
    (`text_tasks.generate_text`).
 3. **Blind test** (brainstorm hard requirement): same ego history, wrong/blank images; the model
    must change its output materially or it is not measuring the pictures.
+3b. **Attention heatmaps** (implemented 2026-10-20, `pd_alpamayo_eval/attention.py`): every new run
+   records where the trajectory expert attended on the 24 input frames; the dashboard overlays it
+   ("model attention"). Needs one new run per scene to look at (predictions stay bit-identical, so the
+   numbers above do not change). First target: Italy, real vs rendered at the instants where the render
+   drives longer, to see what the render makes the model look at instead.
 4. **More samples per instant** (`--num-traj-samples 5`): minADE over samples and a per-instant
    spread, cheaper than many seeds.
 5. **Per-scene gate proposal**: paired-ADE p90 relative to the seed floor, and the signed

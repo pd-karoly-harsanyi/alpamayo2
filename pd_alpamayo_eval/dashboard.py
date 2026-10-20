@@ -34,6 +34,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pd_alpamayo_eval.export_common import MANIFEST_NAME, NUM_FUTURE_STEPS, STEP_NS, read_manifest  # noqa: E402
 from pd_alpamayo_eval.load_export import EgoTrajectory  # noqa: E402
+from pd_alpamayo_eval.attention import camera_shares, heatmap_for, text_share  # noqa: E402
 from pd_alpamayo_eval.make_video import (  # noqa: E402
     ARM_COLORS,
     CAMERA_LABELS,
@@ -202,6 +203,7 @@ class Session:
                 extra_arms[arm] = next(extra, "#7f7f7f")
             self.colors[col] = column_color(arm, self.run_index_of[col], extra_arms)
         self._series()
+        self.has_attention = any(rec.get("attn_img") is not None for recs in self.columns.values() for rec in recs.values())
         self.export_name = export_uri.rstrip("/").rsplit("/", 1)[-1]
         self.projectors = {}
         for name, cal in (self.manifest.get("cameras") or {}).items():
@@ -287,7 +289,7 @@ class Session:
         xyz, _ = self.trajectory.sample(future)
         return t0_rot[0].inv().apply(xyz - t0_xyz), future.size < NUM_FUTURE_STEPS
 
-    def thumbnail(self, col: str, camera: str, index: int, overlay: bool = False) -> bytes:
+    def thumbnail(self, col: str, camera: str, index: int, overlay: bool = False, attention: bool = False) -> bytes:
         from PIL import Image
 
         arm = self.arm_of[col]
@@ -302,30 +304,54 @@ class Session:
                 im.thumbnail((THUMB_W, THUMB_W))
                 im.save(thumb, quality=88)
         projector = self.projectors.get(camera)
-        if not overlay or projector is None:
-            return thumb.read_bytes()
-        # Paths at t0: history, recorded future, the reference prediction (on non-reference arms), this arm's prediction.
         t0 = self.t0s[index]
         rec = self.columns[col].get(t0)
-        ref = self.columns[self.reference].get(t0)
-        paths = []
-        if col != self.reference and ref is not None and ref.get("pred_xyz") is not None:
-            paths.append((ref["pred_xyz"][0], _hex_rgb(self.colors[self.reference]), 3, False))
-        if rec is not None and rec.get("pred_xyz") is not None:
-            paths.append((rec["pred_xyz"][0], _hex_rgb(self.colors[col]), 5, False))
-        gt, _ = self.partial_gt(t0)
-        if gt is not None:  # last, thin and dashed, so it stays visible on top of the predictions
-            paths.append((gt, OVERLAY_COLORS["gt"], 2, True))
+        heat = heatmap_for(rec, camera) if (attention and rec is not None) else None
+        draw = overlay and projector is not None
+        if heat is None and not draw:
+            return thumb.read_bytes()
         with Image.open(thumb) as im:
             im = im.convert("RGB")
-            scale = im.width / projector.width
-            draw_paths(im, projector, paths, scale)
+            if heat is not None:  # first, so the paths stay on top
+                vmax = float(np.asarray(rec["attn_img"], dtype=np.float32)[1].max()) or 1.0  # scale shared by all 24 frames of this instant
+                im = _blend_heatmap(im, heat, vmax)
+            if draw:
+                # Paths at t0: the reference prediction (on non-reference arms), this arm's prediction, the recorded future.
+                ref = self.columns[self.reference].get(t0)
+                paths = []
+                if col != self.reference and ref is not None and ref.get("pred_xyz") is not None:
+                    paths.append((ref["pred_xyz"][0], _hex_rgb(self.colors[self.reference]), 3, False))
+                if rec is not None and rec.get("pred_xyz") is not None:
+                    paths.append((rec["pred_xyz"][0], _hex_rgb(self.colors[col]), 5, False))
+                gt, _ = self.partial_gt(t0)
+                if gt is not None:  # last, thin and dashed, so it stays visible on top of the predictions
+                    paths.append((gt, OVERLAY_COLORS["gt"], 2, True))
+                scale = im.width / projector.width
+                draw_paths(im, projector, paths, scale)
             buf = io.BytesIO()
             im.save(buf, format="JPEG", quality=88)
         return buf.getvalue()
 
 
-def bev_figure(s: Session, col: str, index: int, stretch_lateral: bool, shown_cameras: list[str]):
+HEAT_ALPHA = 0.7  # peak opacity of the attention heatmap
+
+
+def _blend_heatmap(im, heat: np.ndarray, vmax: float):
+    """Blend an attention grid over a PIL image: inferno colours, opacity proportional to attention.
+
+    The grid is the vision tower's token grid of the (aspect-preserving) resized frame, so stretching it to
+    the thumbnail is exact to within one 28 px token."""
+    from matplotlib import colormaps
+    from PIL import Image
+
+    v = np.clip(np.asarray(heat, dtype=np.float32) / vmax, 0.0, 1.0)
+    rgba = (colormaps["inferno"](v) * 255).astype(np.uint8)  # (gh, gw, 4)
+    rgba[..., 3] = (v * HEAT_ALPHA * 255).astype(np.uint8)
+    layer = Image.fromarray(rgba, "RGBA").resize(im.size, Image.BILINEAR)
+    return Image.alpha_composite(im.convert("RGBA"), layer).convert("RGB")
+
+
+def bev_figure(s: Session, col: str, index: int, stretch_lateral: bool, shown_cameras: list[str], shares: dict[str, float] | None = None):
     """Bird's-eye plot with a FIXED trace structure (same traces, order and names on every instant), so
     Plotly.react updates the data in place rather than clearing and rebuilding the plot."""
     import plotly.graph_objects as go
@@ -341,15 +367,21 @@ def bev_figure(s: Session, col: str, index: int, stretch_lateral: bool, shown_ca
         xs = [f["y"]] + [f["y"] + f["length"] * math.sin(v) for v in a] + [f["y"]]
         ys = [f["x"]] + [f["x"] + f["length"] * math.cos(v) for v in a] + [f["x"]]
         label = CAMERA_LABELS.get(f["name"], f["name"])
+        hover = f"{label}{'' if f['used'] else ' (not used)'}"
         if f["name"] in shown:
             kind, line, fill = "camera shown above", dict(color="#d4a017", width=1.5), "rgba(241,196,15,0.45)"
         elif f["used"]:
             kind, line, fill = "other model-input cameras", dict(color="#1f77b4", width=1), "rgba(31,119,180,0.15)"
         else:
             kind, line, fill = "camera not used (rear tele)", dict(color="#999999", width=1, dash="dot"), "rgba(0,0,0,0)"
+        if shares is not None and f["used"]:  # attention mode: wedge opacity = this camera's share of the image attention
+            share = shares.get(f["name"], 0.0)
+            top = max(shares.values()) or 1.0
+            fill = f"rgba(255,127,14,{0.08 + 0.8 * share / top:.2f})"
+            hover += f": {share:.0%} of image attention"
         fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", fill="toself", line=line, fillcolor=fill, name=kind,
                                  showlegend=kind not in legend_done, legendgroup=kind,
-                                 hovertemplate=f"{label}{'' if f['used'] else ' (not used)'}<extra></extra>"))
+                                 hovertemplate=hover + "<extra></extra>"))
         legend_done.add(kind)
     tv = np.arange(1, NUM_FUTURE_STEPS + 1) * 0.1
     empty = np.zeros((0, 3))
@@ -386,11 +418,16 @@ def _fmt(v: float) -> str:
     return f"{v:.2f}" if np.isfinite(v) else "-"
 
 
-def metrics_table(s: Session, col: str, idx: int):
-    """Current-instant and running-mean ADE (m) at 3 s and 6.4 s, vs the real arm and vs the recorded future."""
+def metrics_table(s: Session, col: str, idx: int, attention_split: dict[str, float] | None | bool = False):
+    """Current-instant and running-mean ADE (m) at 3 s and 6.4 s, vs the real arm and vs the recorded future.
+    ``attention_split`` (attention mode): the expert's attention mass on images / sentence, or None if not recorded."""
     from dash import html
 
     rows = []
+    if attention_split is not False:  # attention mode on: always one row, so the card height does not change while stepping
+        txt = (f"images {attention_split['images']:.0%} · sentence {attention_split['sentence']:.0%} · prompt {attention_split['prompt']:.0%}"
+               if attention_split else "not recorded in this run")
+        rows.append(html.Tr([html.Td("expert attention (late layers)", style={"color": "#a55209"}), html.Td(txt, colSpan=2, style={"textAlign": "right", "color": "#a55209"})]))
     for label, series in (("vs recorded future", s.gt_ade_h), ("vs real", s.paired_h)):
         if label == "vs real" and col == s.reference:
             continue
@@ -464,7 +501,8 @@ def build_app(s: Session):
 
         try:
             overlay = request.args.get("overlay", "0") == "1"
-            return Response(s.thumbnail(col, camera, index, overlay=overlay), mimetype="image/jpeg", headers={"Cache-Control": "max-age=86400"})
+            attention = request.args.get("attention", "0") == "1"
+            return Response(s.thumbnail(col, camera, index, overlay=overlay, attention=attention), mimetype="image/jpeg", headers={"Cache-Control": "max-age=86400"})
         except (KeyError, FileNotFoundError, IndexError):
             return Response(status=404)
 
@@ -551,6 +589,9 @@ def build_app(s: Session):
             html.Span("arms"), dcc.Checklist(id="cols", options=[{"label": c, "value": c} for c in cols], value=cols[:4], inline=True),
             dcc.Checklist(id="aspect", options=[{"label": "stretch lateral axis", "value": "stretch"}], value=[], inline=True),
             dcc.Checklist(id="overlay", options=[{"label": "paths on images", "value": "on"}], value=["on"], inline=True),
+            html.Span(dcc.Checklist(id="attention", options=[{"label": "model attention" + ("" if s.has_attention else " (not recorded in these runs)"), "value": "on",
+                                                              "disabled": not s.has_attention}], value=[], inline=True),
+                      title="Heatmap: where the trajectory expert's 64 tokens attended on the image (last quarter of its layers, averaged over heads and diffusion steps; colour scale shared by all 24 input frames of the instant). Bird's-eye wedges: each camera's share of the image attention."),
             html.Span("ADE horizon"), dcc.Dropdown(id="horizon", options=[{"label": h, "value": h} for h in HORIZONS], value="6.4 s", clearable=False, style={"width": "170px"}),
             html.Span(id="where", style={"fontWeight": "bold"}),
         ]),
@@ -580,7 +621,7 @@ def build_app(s: Session):
                 return int(np.argmin(np.abs(s.times - click["points"][0]["x"])))
         return idx
 
-    def _view(idx, selected, camera_set, aspect, overlay, horizon, token):
+    def _view(idx, selected, camera_set, aspect, overlay, attention, horizon, token):
         if token != page_token:  # a tab left open across a server restart would otherwise show mixed scenes
             n_out = len(cols) * (1 + 3 * MAX_SLOTS + 5)
             banner = "THIS TAB IS STALE: the server now serves a different scene or run. Reload the page (Ctrl-Shift-R)."
@@ -593,7 +634,8 @@ def build_app(s: Session):
         cameras = CAMERA_SETS[camera_set]
         ncol = 3 if len(cameras) >= 3 else len(cameras)
         img_style = {"width": f"{100 / ncol:.3f}%", "display": "block"}
-        q = "?overlay=1" if overlay else ""
+        attention = bool(attention) and s.has_attention
+        q = f"?overlay={1 if overlay else 0}&attention={1 if attention else 0}"
         ref = s.columns[s.reference].get(t0)
         nxt = min(idx + 1, n - 1)
         card_styles, srcs, img_styles, pre_srcs, bevs, txts, txt_styles, mets, tls = [], [], [], [], [], [], [], [], []
@@ -609,7 +651,7 @@ def build_app(s: Session):
             if not on:
                 bevs.append(dash.no_update); txts.append(dash.no_update); txt_styles.append(dash.no_update); mets.append(dash.no_update); tls.append(dash.no_update)
                 continue
-            fig = bev_figure(s, col, idx, bool(aspect), cameras)
+            fig = bev_figure(s, col, idx, bool(aspect), cameras, shares=camera_shares(rec) if (attention and rec) else None)
             fig.update_layout(uirevision="keep")
             bevs.append(fig)
             text = _cot_text(rec) if rec else ""
@@ -617,7 +659,7 @@ def build_app(s: Session):
             shown = text or ("(no output)" if rec else "not available for this instant")
             txts.append(html.Span(shown, title=shown))  # full sentence on hover when the box clips it
             txt_styles.append(_txt_style(differs))
-            mets.append(metrics_table(s, col, idx))
+            mets.append(metrics_table(s, col, idx, (text_share(rec) if rec else None) if attention else False))
             tl = card_timeline_figure(s, col, idx, horizon)
             tl.update_layout(uirevision="keep")
             tls.append(tl)
@@ -640,7 +682,7 @@ def build_app(s: Session):
         Output("stale", "style"),
         Output("stale", "children"),
         Input("idx", "value"), Input("cols", "value"), Input("cameras", "value"), Input("aspect", "value"), Input("overlay", "value"),
-        Input("horizon", "value"), State("page-token", "data"),
+        Input("attention", "value"), Input("horizon", "value"), State("page-token", "data"),
     )(_view)
     app.view_fn = _view  # the raw function, for tests
 
