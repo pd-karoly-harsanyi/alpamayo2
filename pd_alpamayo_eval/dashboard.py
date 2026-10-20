@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import json
 import math
 import sys
 from functools import lru_cache
@@ -34,7 +35,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from pd_alpamayo_eval.export_common import MANIFEST_NAME, NUM_FUTURE_STEPS, STEP_NS, read_manifest  # noqa: E402
 from pd_alpamayo_eval.load_export import EgoTrajectory  # noqa: E402
-from pd_alpamayo_eval.attention import camera_shares, heatmap_for, text_share  # noqa: E402
+from pd_alpamayo_eval.attention import camera_shares, text_share  # noqa: E402
 from pd_alpamayo_eval.make_video import (  # noqa: E402
     ARM_COLORS,
     CAMERA_LABELS,
@@ -289,7 +290,10 @@ class Session:
         xyz, _ = self.trajectory.sample(future)
         return t0_rot[0].inv().apply(xyz - t0_xyz), future.size < NUM_FUTURE_STEPS
 
-    def thumbnail(self, col: str, camera: str, index: int, overlay: bool = False, attention: bool = False) -> bytes:
+    def attention_grid(self, col: str, index: int, camera: str, mode: str):
+        return _attention_grid_impl(self, col, index, camera, mode)
+
+    def thumbnail(self, col: str, camera: str, index: int, overlay: bool = False, attention: str = "off") -> bytes:
         from PIL import Image
 
         arm = self.arm_of[col]
@@ -306,15 +310,15 @@ class Session:
         projector = self.projectors.get(camera)
         t0 = self.t0s[index]
         rec = self.columns[col].get(t0)
-        heat = heatmap_for(rec, camera) if (attention and rec is not None) else None
+        heat = self.attention_grid(col, index, camera, attention) if (attention in ATTENTION_MODES and rec is not None) else None
         draw = overlay and projector is not None
         if heat is None and not draw:
             return thumb.read_bytes()
         with Image.open(thumb) as im:
             im = im.convert("RGB")
             if heat is not None:  # first, so the paths stay on top
-                vmax = float(np.asarray(rec["attn_img"], dtype=np.float32)[1].max()) or 1.0  # scale shared by all 24 frames of this instant
-                im = _blend_heatmap(im, heat, vmax)
+                grid, vmax, diverging = heat
+                im = _blend_heatmap(im, grid, vmax, diverging)
             if draw:
                 # Paths at t0: the reference prediction (on non-reference arms), this arm's prediction, the recorded future.
                 ref = self.columns[self.reference].get(t0)
@@ -335,18 +339,99 @@ class Session:
 
 HEAT_ALPHA = 0.7  # peak opacity of the attention heatmap
 
+# What the heatmap shows. Raw maps are dominated by "attention sinks": a few background patches (sky)
+# that the model uses as global stores, the same on every instant (maps correlate ~0.75 between
+# instants; late layers put half the attention into 5 % of the cells). Subtracting the scene average
+# leaves what THIS instant attends to; subtracting the real arm shows what the render changed.
+ATTENTION_MODES = {
+    "minus scene average": ("all", "baseline"),
+    "minus real (paired)": ("all", "paired"),
+    "raw, all layers": ("all", "raw"),
+    "raw, late layers": ("late", "raw"),
+}
+ATTENTION_HELP = ("Where the trajectory expert's 64 tokens attended on the image, averaged over heads and diffusion steps. "
+                  "'minus scene average': this instant's attention minus the mean over every instant and arm of the scene (removes the constant attention-sink pattern); "
+                  "'minus real': this arm minus the real arm at the same instant (red = more, blue = less); 'raw': the attention itself, all layers or the last quarter. "
+                  "One colour scale per instant across all 24 input frames. Bird's-eye wedges: each camera's share of the image attention (late layers).")
 
-def _blend_heatmap(im, heat: np.ndarray, vmax: float):
-    """Blend an attention grid over a PIL image: inferno colours, opacity proportional to attention.
 
-    The grid is the vision tower's token grid of the (aspect-preserving) resized frame, so stretching it to
-    the thumbnail is exact to within one 28 px token."""
+def _attention_grids(rec: dict, depth: str) -> dict[tuple[str, int], np.ndarray] | None:
+    """{(camera, frame): (gh, gw)} grids of one record at a layer depth ('all' | 'late')."""
+    if rec is None or rec.get("attn_img") is None:
+        return None
+    layout = json.loads(str(rec["attn_layout"]))
+    flat = np.asarray(rec["attn_img"], dtype=np.float32)[1 if depth == "late" else 0]
+    return {(it["camera"], it["frame"]): flat[it["offset"] : it["offset"] + it["gh"] * it["gw"]].reshape(it["gh"], it["gw"]) for it in layout["images"]}
+
+
+def _session_attention_baseline(s: "Session", depth: str) -> dict[tuple[str, int], np.ndarray]:
+    """Mean attention grid per (camera, frame) over every record of every column; cached on the session."""
+    cache = s.__dict__.setdefault("_attn_baseline", {})
+    if depth not in cache:
+        sums: dict[tuple[str, int], np.ndarray] = {}
+        counts: dict[tuple[str, int], int] = {}
+        for recs in s.columns.values():
+            for rec in recs.values():
+                g = _attention_grids(rec, depth)
+                if not g:
+                    continue
+                for k, v in g.items():
+                    if k in sums and sums[k].shape == v.shape:
+                        sums[k] += v
+                        counts[k] += 1
+                    elif k not in sums:
+                        sums[k] = v.copy()
+                        counts[k] = 1
+        cache[depth] = {k: sums[k] / counts[k] for k in sums}
+    return cache[depth]
+
+
+def _attention_grid_impl(s: "Session", col: str, index: int, camera: str, mode: str):
+    """(grid, vmax, diverging) for one camera's t0 frame, or None. vmax is shared by the instant's 24 frames."""
+    depth, kind = ATTENTION_MODES[mode]
+    t0 = s.t0s[index]
+    rec = s.columns[col].get(t0)
+    grids = _attention_grids(rec, depth)
+    if not grids:
+        return None
+    frame = max(f for _, f in grids)
+    if kind == "raw":
+        diff, diverging = grids, False
+    elif kind == "baseline":
+        base = _session_attention_baseline(s, depth)
+        diff = {k: np.clip(v - base[k], 0.0, None) if k in base and base[k].shape == v.shape else v for k, v in grids.items()}
+        diverging = False
+    else:  # paired: this arm minus the real arm at the same instant
+        ref = _attention_grids(s.columns[s.reference].get(t0), depth)
+        if not ref or col == s.reference:
+            return None
+        diff = {k: v - ref[k] for k, v in grids.items() if k in ref and ref[k].shape == v.shape}
+        diverging = True
+    if (camera, frame) not in diff:
+        return None
+    vmax = max(float(np.abs(v).max()) for v in diff.values()) or 1.0
+    return diff[(camera, frame)], vmax, diverging
+
+
+def _blend_heatmap(im, heat: np.ndarray, vmax: float, diverging: bool = False):
+    """Blend an attention grid over a PIL image; opacity proportional to |value|.
+
+    Sequential maps use inferno (dark red to yellow); diverging maps (this arm minus real) use coolwarm,
+    red = more attention than real, blue = less. The grid is the vision tower's token grid of the
+    (aspect-preserving) resized frame, so stretching it to the thumbnail is exact to within one 28 px token."""
     from matplotlib import colormaps
     from PIL import Image
 
-    v = np.clip(np.asarray(heat, dtype=np.float32) / vmax, 0.0, 1.0)
-    rgba = (colormaps["inferno"](v) * 255).astype(np.uint8)  # (gh, gw, 4)
-    rgba[..., 3] = (v * HEAT_ALPHA * 255).astype(np.uint8)
+    g = np.asarray(heat, dtype=np.float32) / vmax
+    if diverging:
+        v = np.clip(g, -1.0, 1.0)
+        rgba = (colormaps["coolwarm"]((v + 1) / 2) * 255).astype(np.uint8)
+        alpha = np.abs(v)
+    else:
+        v = np.clip(g, 0.0, 1.0)
+        rgba = (colormaps["inferno"](v) * 255).astype(np.uint8)  # (gh, gw, 4)
+        alpha = v
+    rgba[..., 3] = (alpha * HEAT_ALPHA * 255).astype(np.uint8)
     layer = Image.fromarray(rgba, "RGBA").resize(im.size, Image.BILINEAR)
     return Image.alpha_composite(im.convert("RGBA"), layer).convert("RGB")
 
@@ -501,7 +586,7 @@ def build_app(s: Session):
 
         try:
             overlay = request.args.get("overlay", "0") == "1"
-            attention = request.args.get("attention", "0") == "1"
+            attention = request.args.get("attention", "off")
             return Response(s.thumbnail(col, camera, index, overlay=overlay, attention=attention), mimetype="image/jpeg", headers={"Cache-Control": "max-age=86400"})
         except (KeyError, FileNotFoundError, IndexError):
             return Response(status=404)
@@ -589,9 +674,9 @@ def build_app(s: Session):
             html.Span("arms"), dcc.Checklist(id="cols", options=[{"label": c, "value": c} for c in cols], value=cols[:4], inline=True),
             dcc.Checklist(id="aspect", options=[{"label": "stretch lateral axis", "value": "stretch"}], value=[], inline=True),
             dcc.Checklist(id="overlay", options=[{"label": "paths on images", "value": "on"}], value=["on"], inline=True),
-            html.Span(dcc.Checklist(id="attention", options=[{"label": "model attention" + ("" if s.has_attention else " (not recorded in these runs)"), "value": "on",
-                                                              "disabled": not s.has_attention}], value=[], inline=True),
-                      title="Heatmap: where the trajectory expert's 64 tokens attended on the image (last quarter of its layers, averaged over heads and diffusion steps; colour scale shared by all 24 input frames of the instant). Bird's-eye wedges: each camera's share of the image attention."),
+            html.Span("model attention" if s.has_attention else "model attention (not recorded in these runs)", title=ATTENTION_HELP),
+            dcc.Dropdown(id="attention", options=[{"label": "off", "value": "off"}] + [{"label": m, "value": m} for m in ATTENTION_MODES], value="off",
+                         clearable=False, disabled=not s.has_attention, style={"width": "200px"}),
             html.Span("ADE horizon"), dcc.Dropdown(id="horizon", options=[{"label": h, "value": h} for h in HORIZONS], value="6.4 s", clearable=False, style={"width": "170px"}),
             html.Span(id="where", style={"fontWeight": "bold"}),
         ]),
@@ -634,8 +719,9 @@ def build_app(s: Session):
         cameras = CAMERA_SETS[camera_set]
         ncol = 3 if len(cameras) >= 3 else len(cameras)
         img_style = {"width": f"{100 / ncol:.3f}%", "display": "block"}
-        attention = bool(attention) and s.has_attention
-        q = f"?overlay={1 if overlay else 0}&attention={1 if attention else 0}"
+        attention = attention if (attention in ATTENTION_MODES and s.has_attention) else "off"
+        q = f"?overlay={1 if overlay else 0}&attention={attention}"
+        attention_on = attention != "off"
         ref = s.columns[s.reference].get(t0)
         nxt = min(idx + 1, n - 1)
         card_styles, srcs, img_styles, pre_srcs, bevs, txts, txt_styles, mets, tls = [], [], [], [], [], [], [], [], []
@@ -651,7 +737,7 @@ def build_app(s: Session):
             if not on:
                 bevs.append(dash.no_update); txts.append(dash.no_update); txt_styles.append(dash.no_update); mets.append(dash.no_update); tls.append(dash.no_update)
                 continue
-            fig = bev_figure(s, col, idx, bool(aspect), cameras, shares=camera_shares(rec) if (attention and rec) else None)
+            fig = bev_figure(s, col, idx, bool(aspect), cameras, shares=camera_shares(rec) if (attention_on and rec) else None)
             fig.update_layout(uirevision="keep")
             bevs.append(fig)
             text = _cot_text(rec) if rec else ""
@@ -659,7 +745,7 @@ def build_app(s: Session):
             shown = text or ("(no output)" if rec else "not available for this instant")
             txts.append(html.Span(shown, title=shown))  # full sentence on hover when the box clips it
             txt_styles.append(_txt_style(differs))
-            mets.append(metrics_table(s, col, idx, (text_share(rec) if rec else None) if attention else False))
+            mets.append(metrics_table(s, col, idx, (text_share(rec) if rec else None) if attention_on else False))
             tl = card_timeline_figure(s, col, idx, horizon)
             tl.update_layout(uirevision="keep")
             tls.append(tl)

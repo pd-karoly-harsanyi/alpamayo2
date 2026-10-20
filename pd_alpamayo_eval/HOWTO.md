@@ -167,13 +167,16 @@ so old and new renders sit side by side on the same instant. `--labels '' v2` se
   aspect, zoomable, camera FOV wedges around the ego with the shown camera in gold), the instant's ADE
   table, and that arm's error-over-time plot (click to jump; all on one scale).
 - Cameras dropdown: front wide, the front three, all six used, or any single camera.
-- **Model attention** toggle (runs made after 2026-10-20 only): a heatmap of where the trajectory
-  expert attended on each image (its 64 trajectory tokens over the image patch tokens, last quarter of
-  the expert's layers, averaged over heads and diffusion steps; one colour scale per instant across all
-  24 input frames, so a bright camera is bright because it got more attention than the others), the
-  bird's-eye camera wedges shaded by each camera's share of the image attention (hover for the
-  percentage), and a table row with the attention mass on images / sentence / prompt. Runs without the
-  recording show the toggle greyed out.
+- **Model attention** dropdown (runs made after 2026-10-20 only): a heatmap of where the trajectory
+  expert attended on each image (its 64 trajectory tokens over the image patch tokens, averaged over
+  heads and diffusion steps; one colour scale per instant across all 24 input frames, so a bright camera
+  is bright because it got more attention than the others). Raw maps are dominated by attention sinks
+  (a few sky patches the model uses as global stores, the same on every instant), so the default view
+  is **minus scene average** (this instant minus the mean over all instants and arms of the scene);
+  **minus real** shows this arm minus the real arm at the same instant (red = more, blue = less);
+  **raw, all layers / late layers** is the attention itself. The bird's-eye camera wedges are shaded by
+  each camera's share of the image attention (hover for the percentage) and the table gets a row with
+  the mass on images / sentence / prompt. Runs without the recording show the dropdown greyed out.
 - Scene-level numbers are not on the dashboard; use `compare-runs` (section 5).
 - After pulling new code: restart the server AND hard-reload the tab (Ctrl-Shift-R). A stale tab gives
   `IndexError ... _prepare_grouping` 500s in the server log.
