@@ -66,6 +66,8 @@ and `<t0_ns>_<arm>.png` (NVIDIA's six-camera figure) where `--save-viz` was used
 | `alpamayo-run-9fc99df6` | `austria_full_variations_v2` | all four | 42 | improved Austria replica, with PNGs |
 | `alpamayo-run-99bb841a` | `madrid_full_variations_v2` | all four | 42 | improved Madrid replica, with PNGs (`alpamayo-run-ca0b46ad` = failed resubmit, typo, nothing uploaded) |
 | `alpamayo-run-e6d4f80e` | `madrid_full_variations_v2` | real | 1 | Madrid seed-to-seed noise floor |
+| `alpamayo-run-b357ae61` | `austria_full_variations_v2` | real | 1 | Austria seed-to-seed noise floor |
+| `alpamayo-run-99460be7` | `austria_full_variations_v2` | real | 1 | duplicate submit of the above; bit-identical results (`alpamayo-run-ff478d6e` = first attempt, node died before start, nothing uploaded) |
 | `alpamayo-run-0d74dd90` | `w5s_3s` | real, rendered | 42 | first end-to-end test, with PNGs |
 
 Earlier infrastructure jobs (no results of interest): `alpamayo-probe-f5d8ec4f` (env + weights),

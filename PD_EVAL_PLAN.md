@@ -135,14 +135,15 @@ to be measured (next run).
 ## TODO (2026-10-19)
 
 Where things stand: three scenes run end to end (Italy with a seed floor, Madrid, Austria), the
-improved replicas of all three re-run and compared (Phase 2, "round 2": Italy/Austria unchanged,
-Madrid's apparent gain is inside its seed floor), the dashboard and video work, everything generated is listed in
+improved replicas of all three re-run and compared (Phase 2, "round 2": no scene moved closer to real; seed floors for all three scenes show paired
+ADE cannot separate render from seed, the signed speed bias can), the dashboard and video work, everything generated is listed in
 `pd_alpamayo_eval/INVENTORY.md`.
 
-1. **Seed floor for Austria** (one submit: `--arms real --seed 1` on `austria_full_variations_v2`),
-   then `compare-runs`. Madrid's floor exists now (`alpamayo-run-e6d4f80e`, 2.29 / 7.65 m) and
-   swallows the whole Madrid render effect; Italy's is 0.95 / 2.27 m. Austria's paired numbers
-   (0.7-1.3 m) still have no scale.
+1. **Seed floors: done for all three scenes** (Italy 0.95 / 2.27 m, Madrid 2.29 / 7.65 m, Austria
+   1.39 / 3.69 m; runs `af7ff7bc`, `e6d4f80e`, `b357ae61`). Paired ADE of the renders is at or below
+   the floor on Madrid and Austria and only marginally above it on Italy; the signed predicted-distance
+   bias is the metric that separates render from seed (one-sided on Italy and Austria, symmetric for
+   seeds). Next: make the gate proposal (item 5) around the signed bias + a multi-sample ADE.
 2. **Meta-action text metric**: run the model's `meta_action` task (longitudinal / lateral / lane
    labels) per instant and arm; sentence-level text comparison is pure sampling noise (72 %
    differs between two seeds of the same images). Needs a small addition to `run_export.py`
@@ -335,6 +336,7 @@ How much the new renders moved the prediction, and whether they got closer to re
 | Madrid rainy old / new | 2.44 / 7.60 → 2.25 / 7.63 m | +0.12 → +0.08 m | 45/43 → 45/43 % | 0.83 / 6.26 m | 3.08 → 3.46 m |
 | Madrid snowy old / new | 2.32 / 7.40 → 2.57 / 6.82 m | -1.04 → -0.96 m | 38/51 → 39/50 % | 1.20 / 6.62 m | 2.55 → 2.09 m |
 | **Madrid seed floor** real@seed1 (run `alpamayo-run-e6d4f80e`) | 2.29 / 7.65 m | -2.90 m | 30 % / 55 % | 2.29 / 7.65 m | 1.73 m |
+| **Austria seed floor** real@seed1 (run `alpamayo-run-b357ae61`; `99460be7` is a bit-identical duplicate) | 1.39 / 3.69 m | -0.17 m | 42 % / 37 % | 1.39 / 3.69 m | 1.62 m |
 
 Reading: (1) with common random numbers the new clear-weather render changes the prediction by
 only 0.38 m (Italy) / 0.20 m (Austria) / 0.48 m (Madrid) median, i.e. the model sees the two
@@ -351,10 +353,16 @@ render effect and the 0.3 m "improvement" are both indistinguishable from sampli
 Madrid floor also shows how bimodal the model is there: seed 1 drives 2.9 m shorter than seed 42 on
 the median instant (55 % shorter by >1 m) and happens to land much closer to the recorded future
 (1.73 m vs 2.80 m), i.e. at this intersection the seed decides stop-vs-go, and one trajectory sample
-per instant cannot resolve it (TODO 4, several samples per instant, is the fix); (3) the
-scene-specific speed bias is fully preserved (Italy renders +2.3 m / 70 % longer, Austria -1.1 m /
-53 % shorter, Madrid symmetric as before), so whatever drives the model to speed up on the Italy
-render and slow down on the Austria render is not what the quality pass improved. For the eye: the
+per instant cannot resolve it (TODO 4, several samples per instant, is the fix). **Austria's seed
+floor is 1.39 / 3.69 m**, above every Austria render arm's paired ADE (0.7-1.3 m median, 3.7-4.6 m
+p90): by ADE alone the Austria render effect is also inside the noise. (3) The signed distance test
+is what separates the scenes. The seed rows are symmetric on Italy (-0.01 m, 32 % / 36 %) and
+Austria (-0.17 m, 42 % / 37 %) and lopsided only on bimodal Madrid (-2.9 m), while the render rows
+are one-sided on Italy (+2.3 to +2.6 m, ~70 % longer vs ~15 % shorter) and Austria (-1.0 to -1.5 m,
+~50 % shorter vs ~18 % longer) in BOTH render versions. So on Italy and Austria the reconstruction
+shifts the model's speed in a consistent direction that sampling noise never produces, the quality
+pass did not change that, and ADE is the wrong instrument to see it (it is swamped by symmetric
+sampling noise on every scene). For the eye: the
 sentence differs from the old render on 36-42 % of instants (vs 70 % between seeds), consistent
 with (1). Videos: `outputs/italy_full_variations_v2_928b4727.mp4`,
 `outputs/austria_full_variations_v2_9fc99df6.mp4`, `outputs/madrid_full_variations_v2_99bb841a.mp4`;
