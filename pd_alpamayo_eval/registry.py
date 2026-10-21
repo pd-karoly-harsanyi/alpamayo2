@@ -19,7 +19,7 @@ SCENES: dict[str, list[tuple[str, str, str]]] = {
     # Madrid: the attention run (v2 replica, predictions bit-identical to 99bb841a) is the reference, so the
     # dashboard's "minus real" attention view works; the first render is the "v1" column.
     "madrid": [
-        ("madrid_full_variations_v2", "alpamayo-run-ed10a713", ""),  # v2 replica, seed 42, all arms, WITH expert attention
+        ("madrid_full_variations_v2", "alpamayo-run-eedc9a2d", ""),  # v2 replica, seed 42, all arms, expert attention with every layer stored
         ("madrid_full_variations", "alpamayo-run-e368b20f", "v1"),  # v1 replica, seed 42, all arms
         ("madrid_full_variations_v2", "alpamayo-run-e6d4f80e", "seed1"),  # real arm, seed 1 (noise floor)
     ],

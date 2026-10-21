@@ -431,6 +431,17 @@ attention over the image patch tokens is where the trajectory decision looked
   swapped back to real; causal, sink-free; dashboard "occlusion" views). The real-swap run on Madrid
   is the direct test of the traffic-light hypothesis: if swapping only the front-tele frames to real
   removes the stop-vs-go flips, the defect is proven to be that camera's render.
+- **Per-layer result (run `alpamayo-run-eedc9a2d`, every layer stored, same day).** The sink
+  problem is a depth problem: the last quarter of the expert's layers puts 51 % of a frame's attention
+  into its top 5 % cells, the early and middle bands 10 %. In the middle band (layers 16-47) the
+  maps sit on content: lead cars and road in the wide camera, and in the real front-tele frames the
+  red traffic light is the brightest spot at every stop-vs-go flip instant, while the rendered tele
+  frame of the same instant (light drawn dark/greenish) has no attention on it. Numbers, middle band:
+  real arm 1.22 x the scene average on the light block when it says stop vs 0.96 x when it says go, 7
+  instants above 1.5 x; every render arm ~1.0 x always, never above 1.5 x; at the 28 flip instants
+  real 1.23 x vs rendered 1.05 x (rendered lower on 79 %), 31 % vs 16 % of the frame's excess
+  attention. Dashboard: `--scene madrid`, mode "minus scene average", layers "mid layers" (default),
+  cameras "front tele", first 7 s.
  For the eye: the
 sentence differs from the old render on 36-42 % of instants (vs 70 % between seeds), consistent
 with (1). Videos: `outputs/italy_full_variations_v2_928b4727.mp4`,
