@@ -22,15 +22,16 @@ One row per (scene, render version, arms, seed). "v1" = first replica training (
 | 7 | Madrid intersection | v2 | real, rendered, rainy, snowy | 42 | `alpamayo-run-99bb841a` | `madrid_full_variations_v2` | 10-19 | 2.08 / 7.08 m; inside the Madrid floor; real arm bit-identical to #3 |
 | 8 | Madrid intersection | v2 | real only | 1 | `alpamayo-run-e6d4f80e` | `madrid_full_variations_v2` | 10-19 | seed floor 2.29 / 7.65 m, lopsided (-2.9 m): bimodal stop/go |
 | 9 | Austria roundabout | v2 | real only | 1 | `alpamayo-run-b357ae61` | `austria_full_variations_v2` | 10-20 | seed floor 1.39 / 3.69 m, symmetric; `99460be7` = identical duplicate |
+| 10 | Madrid intersection | v2 | real, rendered, rainy, snowy **+ expert attention** | 42 | `alpamayo-run-ed10a713` | `madrid_full_variations_v2` | 10-21 | = #7 bit for bit, plus attention maps (`alpamayo-run-f7bf3560` = 2-instant smoke of the same) |
 | 0 | Italy 5-8 s window | v1 (no variations) | real, rendered | 42 | `alpamayo-run-0d74dd90` | `w5s_3s` | 10-13 | first end-to-end test only |
 
 Because the real arm is deterministic for a given seed (#5 = #1, #6 = #4, #7 = #3, #9 duplicate), a
 seed-42 real run exists for every scene and a seed-1 real run for every scene; **no further real-arm
 run is needed for seeds 1 or 42 on any of the three clips**, whatever the export version.
 
-NOT run yet (each would be new): any run WITH expert-attention recording (added 2026-10-20; none of
-the runs above has `attn_*` in its npz, so the dashboard's attention toggle is greyed out for them);
-any seed other than 1 / 42; `--num-traj-samples > 1`; meta-action text task; blind / camera-ablation
+NOT run yet (each would be new): expert-attention recording on Italy and Austria (only Madrid #10 has
+`attn_*` in its npz; the dashboard's attention dropdown is greyed out for every other run); any seed
+other than 1 / 42; `--num-traj-samples > 1`; meta-action text task; blind / camera-ablation
 tests; nav-text CFG; any scene other than these three; any scene with other variation types (the
 Madrid source bundle has 4 baked).
 
@@ -113,6 +114,7 @@ and `<t0_ns>_<arm>.png` (NVIDIA's six-camera figure) where `--save-viz` was used
 | `alpamayo-run-e6d4f80e` | `madrid_full_variations_v2` | real | 1 | Madrid seed-to-seed noise floor |
 | `alpamayo-run-b357ae61` | `austria_full_variations_v2` | real | 1 | Austria seed-to-seed noise floor |
 | `alpamayo-run-99460be7` | `austria_full_variations_v2` | real | 1 | duplicate submit of the above; bit-identical results (`alpamayo-run-ff478d6e` = first attempt, node died before start, nothing uploaded) |
+| `alpamayo-run-ed10a713` | `madrid_full_variations_v2` | all four | 42 | Madrid with expert attention (npz has `attn_img`, `attn_layout`, `attn_mass`, `attn_image_mass`); predictions identical to `99bb841a`; `alpamayo-run-f7bf3560` = 2-instant smoke |
 | `alpamayo-run-0d74dd90` | `w5s_3s` | real, rendered | 42 | first end-to-end test, with PNGs |
 
 Earlier infrastructure jobs (no results of interest): `alpamayo-probe-f5d8ec4f` (env + weights),

@@ -210,7 +210,8 @@ run `alpamayo-run-e368b20f`; Austria `austria_full_variations` run `alpamayo-run
 Improved replicas (2026-10-19): Italy `italy_full_variations_v2` run `alpamayo-run-928b4727`,
 Austria `austria_full_variations_v2` run `alpamayo-run-9fc99df6` + floor `alpamayo-run-b357ae61`
 (seed 1), Madrid `madrid_full_variations_v2` run `alpamayo-run-99bb841a` + floor `alpamayo-run-e6d4f80e`
-(seed 1).
+(seed 1) + the same predictions with expert attention `alpamayo-run-ed10a713` (2026-10-21; the
+reference run of `--scene madrid`).
 
 ## 9. Tests
 
