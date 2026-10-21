@@ -122,6 +122,11 @@ pixi run -e launch submit-nebius run --wait --forward-nebius-credentials -- \
 - Cost: 1.75 s inference per instant per arm; ~11 s per instant for four arms without `--save-viz`
   (~35 min per scene), ~19 s with the NVIDIA PNGs. Cold pod start adds ~5 min.
 - The log ends with `uploaded ... -> s3://.../runs/<run id>` and a `SUMMARY {...}` line.
+- **Node deaths** (the cluster loses a worker now and then: "health check failed due to missing too
+  many heartbeats"): since 2026-10-21 the run checkpoints to its bucket folder every 10 instants
+  (`--upload-every`, partial `summary.json` included, so the dashboard can open a partial run). If the job
+  dies, resubmit the same command plus `--resume-from s3://pd-nebius-ray/alpamayo-eval/<export>/runs/<dead run id>`:
+  the new run takes over the finished records and continues; at most 10 instants are redone.
 - Other modes: `probe` (env + weights only), `smoke` (NVIDIA's own sample; needs HF dataset access,
   which the cluster token lacks), `exec -- <cmd>` (anything inside the model env).
 
