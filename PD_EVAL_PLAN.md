@@ -420,6 +420,17 @@ attention over the image patch tokens is where the trajectory decision looked
 - For the reconstruction team: emissive small objects (traffic lights, brake lights) must keep
   their colour state in the dynamic replica; this is a checkable, scene-independent requirement, and
   the attention map makes it a measurable one (attention on the light block, real vs rendered).
+- **Limits of the heatmaps (same day).** Looked at freely across the clip, the bright cells sit on
+  sky and foliage patches that move with the content, in every arm and every mode (minus scene
+  average, z-score, ratio, sink-masked all tried): the deep expert layers read global summaries the
+  LLM parks on low-information "register" tokens, so the maps show where the expert reads, not what
+  visual evidence it uses. The traffic-light signal above is real but was found by knowing where to
+  look. Two follow-ups implemented: `--attention-per-layer` (diagnostic run `alpamayo-run-bd4af965`,
+  2 instants, all 64 layers, to see whether early layers are spatially localised) and **camera
+  occlusion** (`--ablate blank real`: one extra forward per camera with its frames blanked or
+  swapped back to real; causal, sink-free; dashboard "occlusion" views). The real-swap run on Madrid
+  is the direct test of the traffic-light hypothesis: if swapping only the front-tele frames to real
+  removes the stop-vs-go flips, the defect is proven to be that camera's render.
  For the eye: the
 sentence differs from the old render on 36-42 % of instants (vs 70 % between seeds), consistent
 with (1). Videos: `outputs/italy_full_variations_v2_928b4727.mp4`,

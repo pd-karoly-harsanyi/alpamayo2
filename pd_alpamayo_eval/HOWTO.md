@@ -106,6 +106,15 @@ pixi run -e launch submit-nebius run --wait --forward-nebius-credentials -- \
   (`attn_img`, `attn_layout`, `attn_mass`, `attn_image_mass`, ~100 KB per record; `--no-attention`
   turns it off). The recording wraps the attention function and recomputes the softmax weights on the
   side, so predictions are bit-identical with or without it (`tests/test_pd_attention.py`).
+- **Camera occlusion** (`--ablate blank`, `--ablate real`, or both): per record one extra forward per
+  camera, same seed, with that camera's four frames replaced by their mean colour (blank: how much the
+  prediction depends on the camera) or, for render arms, by the real frames (real swap: how much of the
+  gap to the real prediction that camera's render carries). Causal, no model internals, immune to the
+  attention-sink problem of the heatmaps; 7 x the cost (about 2 h per scene for four arms, 1 h for
+  `--arms real rendered`). Results: npz `ablate_<mode>_xyz` (cameras, 64, 3), json `ablate_<mode>` per
+  camera; scene summary with `python -m pd_alpamayo_eval.ablation <run>`; dashboard "model attention"
+  dropdown entries "occlusion: blank camera" / "occlusion: real swap" (wedges shaded by the effect,
+  hover for metres, one table row).
 - The worker uploads only the code tree (never data), builds NVIDIA's env from `uv.lock` on the pod
   (prebuilt flash-attn wheel, ~45 s warm / 2 min cold), stages the export onto the pod's local SSD,
   loads the model (28 s, 69 GiB), runs every instant x arm with ONE seed for all arms (common random
@@ -177,6 +186,12 @@ so old and new renders sit side by side on the same instant. `--labels '' v2` se
   **raw, all layers / late layers** is the attention itself. The bird's-eye camera wedges are shaded by
   each camera's share of the image attention (hover for the percentage) and the table gets a row with
   the mass on images / sentence / prompt. Runs without the recording show the dropdown greyed out.
+  Caveat (Madrid, 2026-10-21): the bright cells are mostly attention sinks on low-information patches
+  (sky, foliage) that move with the content, so no per-position correction removes them; the late
+  layers of the expert read global summaries parked there rather than looking at pixels. Treat the
+  heatmaps as "where the expert reads", not as visual evidence; the occlusion views are the causal
+  readout. `--attention-per-layer` on a short run stores every layer to check whether early layers are
+  localised.
 - Scene-level numbers are not on the dashboard; use `compare-runs` (section 5).
 - After pulling new code: restart the server AND hard-reload the tab (Ctrl-Shift-R). A stale tab gives
   `IndexError ... _prepare_grouping` 500s in the server log.
