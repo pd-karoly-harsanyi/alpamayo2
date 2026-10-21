@@ -174,8 +174,10 @@ class ExpertAttentionRecorder:
         k = min(len(r) for r in rows)
         return np.stack([r[:k] for r in rows]).astype(np.float32)
 
-    def summarize(self, model, tokenized_data: dict, camera_indices, n_frames: int) -> dict[str, Any]:
-        """Map the recorded attention onto the input images. Returns arrays to store in the record's npz."""
+    def summarize(self, model, tokenized_data: dict, camera_indices, n_frames: int, per_layer: bool = False) -> dict[str, Any]:
+        """Map the recorded attention onto the input images. Returns arrays to store in the record's npz.
+        ``per_layer`` also stores ``attn_img_layers`` (L, T) float16: every layer's grid (for finding the
+        depth at which attention is still spatially localised; ~0.5 MB per record)."""
         layout = image_token_layout(model, tokenized_data, camera_indices, n_frames)
         a = self.per_layer()  # (L, K)
         n_layers, k_total = a.shape
@@ -195,12 +197,16 @@ class ExpertAttentionRecorder:
         late = max(1, int(round(n_layers * LATE_FRACTION)))
         grids_all = np.concatenate([a[:, it["start"] : it["end"]].mean(0) for it in layout]) if layout else np.zeros(0)
         grids_late = np.concatenate([a[-late:, it["start"] : it["end"]].mean(0) for it in layout]) if layout else np.zeros(0)
+        image_spans = [(it["start"], it["end"]) for it in layout]
         offset = 0
         for it in layout:
             it["offset"] = offset
             offset += it["end"] - it["start"]
             del it["start"], it["end"]
-        return {
+        out = {}
+        if per_layer and layout:
+            out["attn_img_layers"] = np.concatenate([a[:, it_s:it_e] for it_s, it_e in image_spans], axis=1).astype(np.float16)
+        return out | {
             "attn_img": np.stack([grids_all, grids_late]).astype(np.float16),
             "attn_layout": np.array(json.dumps({"images": layout, "late_layers": late, "num_layers": n_layers, "query_len": q})),
             "attn_mass": mass.astype(np.float32),

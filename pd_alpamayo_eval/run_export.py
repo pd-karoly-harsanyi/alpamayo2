@@ -168,7 +168,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     if recorder is not None:
                         try:
                             npz.update(recorder.summarize(model, model_inputs["tokenized_data"], data["camera_indices"],
-                                                          int(data["image_frames"].shape[1])))
+                                                          int(data["image_frames"].shape[1]), per_layer=args.attention_per_layer))
                             rec["attention_mass_late"] = [round(float(v), 4) for v in npz["attn_mass"][-json.loads(str(npz["attn_layout"]))["late_layers"]:].mean(0)]
                         except Exception as exc:  # attention is best-effort; the prediction is already made
                             rec["attention_error"] = f"{type(exc).__name__}: {exc}"
@@ -255,6 +255,8 @@ def main() -> None:
     parser.add_argument("--diffusion-steps", type=int, default=10)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--save-viz", action="store_true", help="Also write NVIDIA's six-camera PNG per instant and arm.")
+    parser.add_argument("--attention-per-layer", action="store_true",
+                        help="Also store every expert layer's attention grid (attn_img_layers, ~0.5 MB per record); for short diagnostic runs.")
     parser.add_argument("--no-attention", dest="save_attention", action="store_false",
                         help="Do not record the expert's attention over the images (recorded by default into the npz: attn_img, attn_layout, attn_mass, attn_image_mass).")
     args = parser.parse_args()
