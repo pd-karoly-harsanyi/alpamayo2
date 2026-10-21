@@ -169,6 +169,20 @@ class Session:
                 tag = f"@{name}"
             else:
                 tag = f"@seed{summary.get('seed')}"
+            if tag == "@+":
+                # Merge run: same export, seed and arms as an earlier run (predictions identical), carrying extra
+                # fields (occlusion, attention). Its fields are added to the existing records instead of new columns.
+                merged = 0
+                for (t0, arm), rec in records.items():
+                    base = self.columns.get(arm, {}).get(int(t0))
+                    if base is None or base.get("pred_xyz") is None or not np.array_equal(base["pred_xyz"], rec["pred_xyz"]):
+                        raise SystemExit(f"{uri}: cannot merge {arm} @ {t0}: no identical prediction in the earlier runs")
+                    for k, v in rec.items():
+                        if k not in base or base[k] is None:
+                            base[k] = v
+                    merged += 1
+                print(f"merged {merged} records of {summary.get('run_id', run_dir.name)} into existing columns", flush=True)
+                continue
             for (t0, arm), rec in records.items():
                 col = f"{arm}{tag}"
                 self.columns.setdefault(col, {})[int(t0)] = rec
@@ -858,7 +872,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("runs", nargs="*", help="Run locations (s3:// or local); the first is the reference. Runs on another export of the same scene are tagged by export name.")
     parser.add_argument("--scene", default=None, help="Instead of run locations: a scene name from registry.py (italy, madrid, austria) = that scene's reference run, v2 run and seed floor.")
-    parser.add_argument("--labels", nargs="+", default=None, help="One tag per run instead of the automatic seed / export tags (empty string = no tag), e.g. --labels '' v2")
+    parser.add_argument("--labels", nargs="+", default=None, help="One tag per run instead of the automatic seed / export tags (empty string = no tag), e.g. --labels '' v2; '+' merges a run with identical predictions (e.g. an occlusion run) into the existing columns")
     parser.add_argument("--port", type=int, default=8050)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--cache", type=Path, default=Path("~/.cache/alpamayo-eval").expanduser())

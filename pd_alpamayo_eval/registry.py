@@ -9,7 +9,8 @@ from __future__ import annotations
 
 BUCKET = "s3://pd-nebius-ray/alpamayo-eval"
 
-# scene -> list of (export name, run id, label); label "" = the reference run, tagged plainly.
+# scene -> list of (export name, run id, label); label "" = the reference run, tagged plainly; label "+" = a run
+# with identical predictions whose extra fields (occlusion, attention) are merged into the existing columns.
 SCENES: dict[str, list[tuple[str, str, str]]] = {
     "italy": [
         ("full_variations", "alpamayo-run-27f93c3e", ""),  # v1 replica, seed 42, all arms
@@ -20,6 +21,7 @@ SCENES: dict[str, list[tuple[str, str, str]]] = {
     # dashboard's "minus real" attention view works; the first render is the "v1" column.
     "madrid": [
         ("madrid_full_variations_v2", "alpamayo-run-eedc9a2d", ""),  # v2 replica, seed 42, all arms, expert attention with every layer stored
+        ("madrid_full_variations_v2", "alpamayo-run-d931ddaf", "+"),  # camera occlusion (blank + real swap) for real and rendered; merged into the columns above
         ("madrid_full_variations", "alpamayo-run-e368b20f", "v1"),  # v1 replica, seed 42, all arms
         ("madrid_full_variations_v2", "alpamayo-run-e6d4f80e", "seed1"),  # real arm, seed 1 (noise floor)
     ],

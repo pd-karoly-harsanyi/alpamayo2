@@ -150,11 +150,14 @@ ADE cannot separate render from seed, the signed speed bias can), the dashboard 
    (`text_tasks.generate_text`).
 3. **Blind test** (brainstorm hard requirement): same ego history, wrong/blank images; the model
    must change its output materially or it is not measuring the pictures.
-3b. **Attention heatmaps** (implemented 2026-10-20, `pd_alpamayo_eval/attention.py`): every new run
-   records where the trajectory expert attended on the 24 input frames; the dashboard overlays it
-   ("model attention"). Done for Madrid (`ed10a713`: the red traffic light is not reproduced by the
-   render and the model runs it; see Phase 2). Next: the same run for Italy (`italy_full_variations_v2`)
-   and Austria, to find what makes the model drive longer / shorter there.
+3b. **Attention heatmaps and camera occlusion** (implemented 2026-10-20/21, `attention.py`,
+   `ablation.py`): done for Madrid (attention with every layer `eedc9a2d`, occlusion `d931ddaf`): the
+   red traffic light is not reproduced by the render; the model reads it mainly from the front-wide
+   camera; restoring that camera removes 24 of 28 flips (see Phase 2). Next: the attention run for
+   Italy and Austria (`italy_full_variations_v2`, `austria_full_variations_v2`; 35 min each) as the
+   screening tool for what makes the model drive longer / shorter there, then occlusion on the
+   camera the maps point at. Before more occlusion runs: a prefetching loader (the 13 forwards per
+   instant are CPU-bound).
 4. **More samples per instant** (`--num-traj-samples 5`): minADE over samples and a per-instant
    spread, cheaper than many seeds.
 5. **Per-scene gate proposal**: paired-ADE p90 relative to the seed floor, and the signed
@@ -442,6 +445,35 @@ attention over the image patch tokens is where the trajectory decision looked
   real 1.23 x vs rendered 1.05 x (rendered lower on 79 %), 31 % vs 16 % of the frame's excess
   attention. Dashboard: `--scene madrid`, mode "minus scene average", layers "mid layers" (default),
   cameras "front tele", first 7 s.
+
+**Camera occlusion, Madrid (2026-10-21, run `alpamayo-run-d931ddaf`, real + rendered, 185 instants,
+13 forwards per instant, main predictions bit-identical to the reference).** The causal readout,
+no model internals:
+
+| ADE shift when a camera is blanked (m) | cross left | front wide | cross right | rear left | rear right | front tele |
+|---|---|---|---|---|---|---|
+| real, median / mean | 0.19 / 0.86 | **1.15 / 2.57** | 0.12 / 0.81 | 0.06 / 0.31 | 0.10 / 0.38 | **1.18 / 2.45** |
+| real, sentence changes | 17 % | **89 %** | 13 % | 4 % | 7 % | 42 % |
+| rendered, median / mean | 0.20 / 1.28 | **2.32 / 3.03** | 0.14 / 1.00 | 0.07 / 0.44 | 0.07 / 0.53 | **1.37 / 2.79** |
+
+| rendered arm, ONE camera swapped back to real | cross left | front wide | cross right | rear left | rear right | front tele |
+|---|---|---|---|---|---|---|
+| gap to the real prediction after the swap, median (before 2.08 m) | 2.33 | **0.67** | 1.85 | 2.02 | 2.13 | **1.11** |
+| share of the mean gap removed | 1 % | **41 %** | 3 % | -1 % | -3 % | **22 %** |
+| of the 28 stop-vs-go flips, now says stop | 9 | **24** | 4 | 1 | 2 | **14** |
+| (blanking that camera of the REAL input makes real say go on) | 0 | **17** | 0 | 0 | 0 | 4 |
+
+Reading: (1) the model drives by the two front cameras; the rear cameras are irrelevant (blanking
+them moves the prediction < 0.1 m) and the cross cameras matter only in the tail; (2) **the Madrid
+replica effect sits in the front-wide render first, the front-tele render second**: restoring only
+the front-wide frames to real removes 41 % of the whole gap and turns 24 of the 28 red-light flips
+back into "stop", the tele 14 of 28, every other camera nothing; (3) the attention maps pointed at
+the tele camera's light because it is large there, but the causal test says the model reads the
+light state mainly from the wide camera (blanking it on real frames makes the model run the red
+light on 17 of the 28 instants). Both renders show the same defect (light not red), so the two
+cameras agree. The occlusion run is the slow one (75 s per instant: 13 forwards each with CPU
+preprocessing), so it is a per-hypothesis tool, not a per-scene default; the attention run (2 s per
+record) stays the screening tool and the occlusion run the proof.
  For the eye: the
 sentence differs from the old render on 36-42 % of instants (vs 70 % between seeds), consistent
 with (1). Videos: `outputs/italy_full_variations_v2_928b4727.mp4`,
