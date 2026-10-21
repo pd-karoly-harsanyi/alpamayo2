@@ -152,9 +152,9 @@ ADE cannot separate render from seed, the signed speed bias can), the dashboard 
    must change its output materially or it is not measuring the pictures.
 3b. **Attention heatmaps** (implemented 2026-10-20, `pd_alpamayo_eval/attention.py`): every new run
    records where the trajectory expert attended on the 24 input frames; the dashboard overlays it
-   ("model attention"). Needs one new run per scene to look at (predictions stay bit-identical, so the
-   numbers above do not change). First target: Italy, real vs rendered at the instants where the render
-   drives longer, to see what the render makes the model look at instead.
+   ("model attention"). Done for Madrid (`ed10a713`: the red traffic light is not reproduced by the
+   render and the model runs it; see Phase 2). Next: the same run for Italy (`italy_full_variations_v2`)
+   and Austria, to find what makes the model drive longer / shorter there.
 4. **More samples per instant** (`--num-traj-samples 5`): minADE over samples and a per-instant
    spread, cheaper than many seeds.
 5. **Per-scene gate proposal**: paired-ADE p90 relative to the seed floor, and the signed
@@ -387,7 +387,40 @@ Per instant, noise dominates (spread > shift everywhere), which is why unsigned 
 the clip the shift is unambiguous on Italy and Austria (t 5-9, identical in both render versions) and
 absent for a seed re-roll (t < 1). Madrid's seed re-roll itself shifts the mean by 6 m (bimodal
 stop-vs-go), so Madrid is unmeasurable with one sample per instant. A gate therefore tests the signed
-shift over many instants (or many samples per instant), not the per-instant ADE. For the eye: the
+shift over many instants (or many samples per instant), not the per-instant ADE.
+
+**Attention maps, Madrid (2026-10-21, run `alpamayo-run-ed10a713`, predictions bit-identical to
+`99bb841a` on all 740 records).** The diffusion expert attends straight into the VLM cache, so its
+attention over the image patch tokens is where the trajectory decision looked
+(`pd_alpamayo_eval/attention.py`; dashboard "model attention"). Facts from the 740 maps:
+
+- The model sees each camera at ~504 x 280 px (10 x 18 tokens of 28 px); a traffic light is a few
+  pixels. 59 % of the expert's attention is on the images, 30 % on the prompt tokens (ego history),
+  3 % on its own sentence. Camera shares: cross-left 27 %, front-wide 24 %, cross-right 19 %,
+  front-tele 15 %, rear 7-8 % each; the four frames of a camera get equal shares (no recency
+  preference). Shares are the same for every arm, so the render does not change WHERE the model
+  looks at the camera level.
+- Raw maps are dominated by attention sinks: a few sky patches, identical on every instant (maps
+  correlate 0.75 between instants, late layers put half the attention into 5 % of the cells). Only
+  the map minus the scene average (or minus the real arm) shows content; the dashboard defaults to
+  that.
+- **The red traffic light is the whole Madrid story.** The real arm's sentence says stop on 54
+  instants (the car waits at a red light for the first ~5 s and again at ~6.4 s), the rendered arm's on
+  27: on 28 instants the render makes the model "accelerate to proceed through the intersection since
+  the traffic light turns green" where the real frames give "stop due to the red traffic light", and
+  the trajectory follows (these are the stop-vs-go flips behind the 7-8 m ADE tails). In the rendered
+  front-tele frames the light's red lamp is not reproduced (it reads dark/greenish). The attention
+  shows the mechanism: on real frames the expert's excess attention sits on the traffic-light block
+  of the tele camera when it says stop (1.13 x the scene average there, 30 % of the frame's excess
+  attention at the flip instants, 6 instants above 1.5 x); on rendered frames that block is never
+  above 1.5 x, gets 14 % of the excess attention at the flips, and is lower than real on 75 % of
+  them. So on Madrid the replica effect is not "noise": it is one small rendering defect (traffic
+  light state) that removes the cue the model uses to decide, which single-sample ADE could not
+  separate from the seed noise because the model is bimodal exactly where that cue matters.
+- For the reconstruction team: emissive small objects (traffic lights, brake lights) must keep
+  their colour state in the dynamic replica; this is a checkable, scene-independent requirement, and
+  the attention map makes it a measurable one (attention on the light block, real vs rendered).
+ For the eye: the
 sentence differs from the old render on 36-42 % of instants (vs 70 % between seeds), consistent
 with (1). Videos: `outputs/italy_full_variations_v2_928b4727.mp4`,
 `outputs/austria_full_variations_v2_9fc99df6.mp4`, `outputs/madrid_full_variations_v2_99bb841a.mp4`;
