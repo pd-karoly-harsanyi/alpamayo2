@@ -168,7 +168,9 @@ first use. `--scene` takes the run list from `pd_alpamayo_eval/registry.py`; add
 new run lands. The first run's `real` is the reference. Further runs on the same export are tagged by
 seed (`real@seed1`); a run on ANOTHER export of the same scene (a newer render of the same clip,
 e.g. `italy_full_variations_v2`) is tagged by export name and its cards show that export's images,
-so old and new renders sit side by side on the same instant. `--labels '' v2` sets your own tags.
+so old and new renders sit side by side on the same instant. `--labels '' v2` sets your own tags; the label `+` merges a run with identical predictions (an
+occlusion or attention run of the same export and seed) into the existing columns, so its extra
+fields show on the same cards.
 
 - Slider over instants with play / pause / step, speed, and a time readout. Click the slider handle
   and the arrow keys step too.
