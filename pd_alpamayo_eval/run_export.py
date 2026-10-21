@@ -131,9 +131,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         print(f"recording expert attention ({recorder.impl}, {recorder.num_layers} layers)", flush=True)
 
     preds: dict[tuple[int, str], np.ndarray] = {}
+    if args.ablate:
+        from pd_alpamayo_eval.ablation import ablated, camera_names_of, summarize_record
+
+        arms = sorted(arms, key=lambda a: a != "real")  # real first: the real swap and the vs-real metrics need it
+        summary["ablate"] = list(args.ablate)
     with results_path.open("a", encoding="utf-8") as results_file:
         for i, t0_ns in enumerate(instants):
             available = list_arms(export_dir, t0_ns)
+            real_data = None  # the real arm's loaded data of this instant, for the real swap
             for arm in arms:
                 if arm not in available:
                     continue  # optional arm (e.g. a weather variation) missing for this instant
@@ -178,6 +184,31 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         ade = _ade(pred, gt)
                         rec["ade_vs_gt_m"] = [round(float(v), 3) for v in ade]
                         rec["min_ade_vs_gt_m"] = round(float(ade.min()), 3)
+                    if args.ablate:
+                        if arm == "real":
+                            real_data = data
+                        t_abl = time.perf_counter()
+                        cameras = camera_names_of(data)
+                        npz["ablate_cameras"] = np.array(cameras)
+                        real_pred = preds.get((t0_ns, "real"))
+                        for mode in args.ablate:
+                            if mode == "real" and (arm == "real" or real_data is None):
+                                continue
+                            abl_preds, abl_cots = [], []
+                            for k in range(len(cameras)):
+                                d = ablated(data, k, real_data["image_frames"] if mode == "real" else None)
+                                inputs = helper.to_device(helper.prepare_model_inputs(d, model.config, model.tokenizer), "cuda")
+                                torch.cuda.manual_seed_all(args.seed)
+                                with torch.autocast("cuda", dtype=torch.bfloat16):
+                                    a_xyz, _r, _l, a_extra = model.sample_trajectories_from_data(
+                                        data=inputs, top_p=0.98, temperature=0.6, num_traj_samples=args.num_traj_samples,
+                                        diffusion_kwargs={"inference_step": args.diffusion_steps}, return_extra=True)
+                                abl_preds.append(a_xyz.cpu().numpy()[0, 0, 0])
+                                abl_cots.append(str(np.asarray(a_extra["cot"], dtype=object).reshape(-1)[0]))
+                                del a_xyz, _r, _l, a_extra, inputs
+                            npz[f"ablate_{mode}_xyz"] = np.stack(abl_preds)
+                            rec[f"ablate_{mode}"] = summarize_record(pred[0], real_pred[0] if real_pred is not None else None, abl_preds, cameras, abl_cots)
+                        rec["ablate_s"] = round(time.perf_counter() - t_abl, 2)
                     np.savez(out_dir / f"{t0_ns}_{arm}.npz", **npz)
                     if args.save_viz:
                         try:
@@ -255,6 +286,9 @@ def main() -> None:
     parser.add_argument("--diffusion-steps", type=int, default=10)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--save-viz", action="store_true", help="Also write NVIDIA's six-camera PNG per instant and arm.")
+    parser.add_argument("--ablate", nargs="+", choices=["blank", "real"], default=None,
+                        help="Camera occlusion: per record one extra forward per camera with its frames replaced by their mean colour (blank) "
+                             "and/or, for render arms, by the real frames (real). 6 extra forwards per record. See ablation.py.")
     parser.add_argument("--attention-per-layer", action="store_true",
                         help="Also store every expert layer's attention grid (attn_img_layers, ~0.5 MB per record); for short diagnostic runs.")
     parser.add_argument("--no-attention", dest="save_attention", action="store_false",

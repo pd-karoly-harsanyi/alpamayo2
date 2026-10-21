@@ -205,6 +205,7 @@ class Session:
             self.colors[col] = column_color(arm, self.run_index_of[col], extra_arms)
         self._series()
         self.has_attention = any(rec.get("attn_img") is not None for recs in self.columns.values() for rec in recs.values())
+        self.has_ablation = {m for m in ("blank", "real") if any(rec.get(f"ablate_{m}") for recs in self.columns.values() for rec in recs.values())}
         self.export_name = export_uri.rstrip("/").rsplit("/", 1)[-1]
         self.projectors = {}
         for name, cal in (self.manifest.get("cameras") or {}).items():
@@ -348,7 +349,11 @@ ATTENTION_MODES = {
     "minus real (paired)": ("all", "paired"),
     "raw, all layers": ("all", "raw"),
     "raw, late layers": ("late", "raw"),
+    # camera occlusion (causal, needs a run made with --ablate): no image heatmap, the bird's-eye wedges carry the numbers
+    "occlusion: blank camera": (None, "ablate_blank"),
+    "occlusion: real swap": (None, "ablate_real"),
 }
+ABLATION_MODES = {m for m, (_, k) in ATTENTION_MODES.items() if k.startswith("ablate_")}
 ATTENTION_HELP = ("Where the trajectory expert's 64 tokens attended on the image, averaged over heads and diffusion steps. "
                   "'minus scene average': this instant's attention minus the mean over every instant and arm of the scene (removes the constant attention-sink pattern); "
                   "'minus real': this arm minus the real arm at the same instant (red = more, blue = less); 'raw': the attention itself, all layers or the last quarter. "
@@ -389,6 +394,8 @@ def _session_attention_baseline(s: "Session", depth: str) -> dict[tuple[str, int
 def _attention_grid_impl(s: "Session", col: str, index: int, camera: str, mode: str):
     """(grid, vmax, diverging) for one camera's t0 frame, or None. vmax is shared by the instant's 24 frames."""
     depth, kind = ATTENTION_MODES[mode]
+    if depth is None:  # occlusion modes have no per-pixel map
+        return None
     t0 = s.t0s[index]
     rec = s.columns[col].get(t0)
     grids = _attention_grids(rec, depth)
@@ -436,7 +443,47 @@ def _blend_heatmap(im, heat: np.ndarray, vmax: float, diverging: bool = False):
     return Image.alpha_composite(im.convert("RGBA"), layer).convert("RGB")
 
 
-def bev_figure(s: Session, col: str, index: int, stretch_lateral: bool, shown_cameras: list[str], shares: dict[str, float] | None = None):
+def _ablation_effects(s: Session, col: str, t0: int, rec: dict, mode: str) -> dict[str, float] | None:
+    """Per camera, the effect of occluding it, in metres of ADE.
+
+    blank: ADE between the prediction with the camera blanked and the arm's own prediction (dependence on
+    the camera). real swap (render arms): how much of this arm's gap to the real prediction the swap
+    removes, i.e. paired ADE before the swap minus ADE vs real after it (clipped at 0)."""
+    abl = rec.get(f"ablate_{mode}") if rec else None
+    if not abl:
+        return None
+    if mode == "blank":
+        return {cam: float(v["ade_vs_own_m"]) for cam, v in abl.items()}
+    ref = s.columns[s.reference].get(t0)
+    if ref is None or ref.get("pred_xyz") is None or rec.get("pred_xyz") is None:
+        return None
+    before = float(np.linalg.norm(rec["pred_xyz"][0, :, :2] - ref["pred_xyz"][0, :, :2], axis=-1).mean())
+    return {cam: max(0.0, before - float(v.get("ade_vs_real_m", before))) for cam, v in abl.items()}
+
+
+def _ablation_wedges(s: Session, col: str, t0: int, rec: dict, mode: str):
+    eff = _ablation_effects(s, col, t0, rec, mode)
+    if not eff:
+        return None, None
+    abl = rec[f"ablate_{mode}"]
+    if mode == "blank":
+        texts = {cam: f"blanked: prediction moves {eff[cam]:.2f} m (ADE), {abl[cam]['dist_diff_vs_own_m']:+.1f} m distance" for cam in eff}
+    else:
+        texts = {cam: f"swapped to real: gap to real {abl[cam].get('ade_vs_real_m', float('nan')):.2f} m (removes {eff[cam]:.2f} m)" for cam in eff}
+    return eff, texts
+
+
+def _ablation_row(s: Session, col: str, t0: int, rec: dict, mode: str):
+    eff = _ablation_effects(s, col, t0, rec, mode) if rec else None
+    label = "occlusion: ADE shift when camera blanked (m)" if mode == "blank" else "occlusion: gap to real removed by swapping camera (m)"
+    if not eff:
+        return (label, "not recorded for this record" if (rec and rec.get("pred_xyz") is not None) else "-")
+    top = sorted(eff.items(), key=lambda kv: -kv[1])
+    return (label, " · ".join(f"{CAMERA_LABELS.get(c, c)} {v:.2f}" for c, v in top))
+
+
+def bev_figure(s: Session, col: str, index: int, stretch_lateral: bool, shown_cameras: list[str], shares: dict[str, float] | None = None,
+               share_text: dict[str, str] | None = None):
     """Bird's-eye plot with a FIXED trace structure (same traces, order and names on every instant), so
     Plotly.react updates the data in place rather than clearing and rebuilding the plot."""
     import plotly.graph_objects as go
@@ -459,11 +506,11 @@ def bev_figure(s: Session, col: str, index: int, stretch_lateral: bool, shown_ca
             kind, line, fill = "other model-input cameras", dict(color="#1f77b4", width=1), "rgba(31,119,180,0.15)"
         else:
             kind, line, fill = "camera not used (rear tele)", dict(color="#999999", width=1, dash="dot"), "rgba(0,0,0,0)"
-        if shares is not None and f["used"]:  # attention mode: wedge opacity = this camera's share of the image attention
+        if shares is not None and f["used"]:  # attention / occlusion mode: wedge opacity = this camera's value
             share = shares.get(f["name"], 0.0)
             top = max(shares.values()) or 1.0
-            fill = f"rgba(255,127,14,{0.08 + 0.8 * share / top:.2f})"
-            hover += f": {share:.0%} of image attention"
+            fill = f"rgba(255,127,14,{0.08 + 0.8 * max(share, 0.0) / top:.2f})"
+            hover += ": " + (share_text[f["name"]] if share_text and f["name"] in share_text else f"{share:.0%} of image attention")
         fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", fill="toself", line=line, fillcolor=fill, name=kind,
                                  showlegend=kind not in legend_done, legendgroup=kind,
                                  hovertemplate=hover + "<extra></extra>"))
@@ -509,10 +556,14 @@ def metrics_table(s: Session, col: str, idx: int, attention_split: dict[str, flo
     from dash import html
 
     rows = []
-    if attention_split is not False:  # attention mode on: always one row, so the card height does not change while stepping
-        txt = (f"images {attention_split['images']:.0%} · sentence {attention_split['sentence']:.0%} · prompt {attention_split['prompt']:.0%}"
-               if attention_split else "not recorded in this run")
-        rows.append(html.Tr([html.Td("expert attention (late layers)", style={"color": "#a55209"}), html.Td(txt, colSpan=2, style={"textAlign": "right", "color": "#a55209"})]))
+    if attention_split is not False:  # attention / occlusion mode on: always one row, so the card height does not change while stepping
+        if isinstance(attention_split, tuple):
+            label, txt = attention_split
+        else:
+            label = "expert attention (late layers)"
+            txt = (f"images {attention_split['images']:.0%} · sentence {attention_split['sentence']:.0%} · prompt {attention_split['prompt']:.0%}"
+                   if attention_split else "not recorded in this run")
+        rows.append(html.Tr([html.Td(label, style={"color": "#a55209", "whiteSpace": "nowrap"}), html.Td(txt, colSpan=2, style={"textAlign": "right", "color": "#a55209", "fontSize": "11px"})]))
     for label, series in (("vs recorded future", s.gt_ade_h), ("vs real", s.paired_h)):
         if label == "vs real" and col == s.reference:
             continue
@@ -674,9 +725,11 @@ def build_app(s: Session):
             html.Span("arms"), dcc.Checklist(id="cols", options=[{"label": c, "value": c} for c in cols], value=cols[:4], inline=True),
             dcc.Checklist(id="aspect", options=[{"label": "stretch lateral axis", "value": "stretch"}], value=[], inline=True),
             dcc.Checklist(id="overlay", options=[{"label": "paths on images", "value": "on"}], value=["on"], inline=True),
-            html.Span("model attention" if s.has_attention else "model attention (not recorded in these runs)", title=ATTENTION_HELP),
-            dcc.Dropdown(id="attention", options=[{"label": "off", "value": "off"}] + [{"label": m, "value": m} for m in ATTENTION_MODES], value="off",
-                         clearable=False, disabled=not s.has_attention, style={"width": "200px"}),
+            html.Span("model attention" if (s.has_attention or s.has_ablation) else "model attention (not recorded in these runs)", title=ATTENTION_HELP),
+            dcc.Dropdown(id="attention", options=[{"label": "off", "value": "off"}]
+                         + [{"label": m, "value": m} for m in ATTENTION_MODES if m not in ABLATION_MODES and s.has_attention]
+                         + [{"label": m, "value": m} for m in ABLATION_MODES if ATTENTION_MODES[m][1][7:] in s.has_ablation],
+                         value="off", clearable=False, disabled=not (s.has_attention or s.has_ablation), style={"width": "210px"}),
             html.Span("ADE horizon"), dcc.Dropdown(id="horizon", options=[{"label": h, "value": h} for h in HORIZONS], value="6.4 s", clearable=False, style={"width": "170px"}),
             html.Span(id="where", style={"fontWeight": "bold"}),
         ]),
@@ -719,9 +772,10 @@ def build_app(s: Session):
         cameras = CAMERA_SETS[camera_set]
         ncol = 3 if len(cameras) >= 3 else len(cameras)
         img_style = {"width": f"{100 / ncol:.3f}%", "display": "block"}
-        attention = attention if (attention in ATTENTION_MODES and s.has_attention) else "off"
+        attention = attention if attention in ATTENTION_MODES else "off"
         q = f"?overlay={1 if overlay else 0}&attention={attention}"
         attention_on = attention != "off"
+        ablation = ATTENTION_MODES[attention][1][7:] if attention in ABLATION_MODES else None  # "blank" | "real" | None
         ref = s.columns[s.reference].get(t0)
         nxt = min(idx + 1, n - 1)
         card_styles, srcs, img_styles, pre_srcs, bevs, txts, txt_styles, mets, tls = [], [], [], [], [], [], [], [], []
@@ -737,7 +791,11 @@ def build_app(s: Session):
             if not on:
                 bevs.append(dash.no_update); txts.append(dash.no_update); txt_styles.append(dash.no_update); mets.append(dash.no_update); tls.append(dash.no_update)
                 continue
-            fig = bev_figure(s, col, idx, bool(aspect), cameras, shares=camera_shares(rec) if (attention_on and rec) else None)
+            if ablation and rec:
+                shares, texts = _ablation_wedges(s, col, t0, rec, ablation)
+                fig = bev_figure(s, col, idx, bool(aspect), cameras, shares=shares, share_text=texts)
+            else:
+                fig = bev_figure(s, col, idx, bool(aspect), cameras, shares=camera_shares(rec) if (attention_on and rec) else None)
             fig.update_layout(uirevision="keep")
             bevs.append(fig)
             text = _cot_text(rec) if rec else ""
@@ -745,7 +803,10 @@ def build_app(s: Session):
             shown = text or ("(no output)" if rec else "not available for this instant")
             txts.append(html.Span(shown, title=shown))  # full sentence on hover when the box clips it
             txt_styles.append(_txt_style(differs))
-            mets.append(metrics_table(s, col, idx, (text_share(rec) if rec else None) if attention_on else False))
+            if ablation:
+                mets.append(metrics_table(s, col, idx, _ablation_row(s, col, t0, rec, ablation)))
+            else:
+                mets.append(metrics_table(s, col, idx, (text_share(rec) if rec else None) if attention_on else False))
             tl = card_timeline_figure(s, col, idx, horizon)
             tl.update_layout(uirevision="keep")
             tls.append(tl)
