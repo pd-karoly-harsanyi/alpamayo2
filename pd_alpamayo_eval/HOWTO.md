@@ -191,7 +191,11 @@ so old and new renders sit side by side on the same instant. `--labels '' v2` se
   layers of the expert read global summaries parked there rather than looking at pixels. Treat the
   heatmaps as "where the expert reads", not as visual evidence; the occlusion views are the causal
   readout. `--attention-per-layer` on a short run stores every layer to check whether early layers are
-  localised.
+  localised. Verdict from that run (`alpamayo-run-bd4af965`): early layers diffuse, layers 48-63
+  sink-dominated, the **middle band (16-47)** attends to content (lead cars, the red traffic light), so
+  every run since stores all 64 layers (`attn_img_layers`, ~0.5 MB per record; `--no-attention-per-layer`
+  to skip) and the dashboard shows a **layers** dropdown (mid / early / late / all) next to the mode
+  when the run has them; "mid layers" is the default.
 - Scene-level numbers are not on the dashboard; use `compare-runs` (section 5).
 - After pulling new code: restart the server AND hard-reload the tab (Ctrl-Shift-R). A stale tab gives
   `IndexError ... _prepare_grouping` 500s in the server log.

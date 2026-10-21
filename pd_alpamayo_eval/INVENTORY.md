@@ -22,16 +22,16 @@ One row per (scene, render version, arms, seed). "v1" = first replica training (
 | 7 | Madrid intersection | v2 | real, rendered, rainy, snowy | 42 | `alpamayo-run-99bb841a` | `madrid_full_variations_v2` | 10-19 | 2.08 / 7.08 m; inside the Madrid floor; real arm bit-identical to #3 |
 | 8 | Madrid intersection | v2 | real only | 1 | `alpamayo-run-e6d4f80e` | `madrid_full_variations_v2` | 10-19 | seed floor 2.29 / 7.65 m, lopsided (-2.9 m): bimodal stop/go |
 | 9 | Austria roundabout | v2 | real only | 1 | `alpamayo-run-b357ae61` | `austria_full_variations_v2` | 10-20 | seed floor 1.39 / 3.69 m, symmetric; `99460be7` = identical duplicate |
-| 10 | Madrid intersection | v2 | real, rendered, rainy, snowy **+ expert attention** | 42 | `alpamayo-run-ed10a713` | `madrid_full_variations_v2` | 10-21 | = #7 bit for bit, plus attention maps (`alpamayo-run-f7bf3560` = 2-instant smoke of the same) |
+| 10 | Madrid intersection | v2 | real, rendered, rainy, snowy **+ expert attention** | 42 | `alpamayo-run-ed10a713` | `madrid_full_variations_v2` | 10-21 | = #7 bit for bit, plus attention maps (all/late layer averages only). `alpamayo-run-f7bf3560` = 2-instant smoke; `alpamayo-run-9c49cd62` = accidental resubmit, identical in every record (predictions and maps); `alpamayo-run-bd4af965` = 2 instants with every layer stored (diagnostic: middle layers are the informative ones) |
 | 0 | Italy 5-8 s window | v1 (no variations) | real, rendered | 42 | `alpamayo-run-0d74dd90` | `w5s_3s` | 10-13 | first end-to-end test only |
 
 Because the real arm is deterministic for a given seed (#5 = #1, #6 = #4, #7 = #3, #9 duplicate), a
 seed-42 real run exists for every scene and a seed-1 real run for every scene; **no further real-arm
 run is needed for seeds 1 or 42 on any of the three clips**, whatever the export version.
 
-NOT run yet (each would be new): expert-attention recording on Italy and Austria (only Madrid #10 has
-`attn_*` in its npz; the dashboard's attention dropdown is greyed out for every other run); any seed
-other than 1 / 42; `--num-traj-samples > 1`; meta-action text task; blind / camera-ablation
+NOT run yet (each would be new): a full scene with every attention layer stored (default since
+2026-10-21; #10 has only the all/late averages, which are sink-dominated); expert attention on Italy and
+Austria; camera occlusion (`--ablate blank real`) on any scene; any seed other than 1 / 42; `--num-traj-samples > 1`; meta-action text task; blind / camera-ablation
 tests; nav-text CFG; any scene other than these three; any scene with other variation types (the
 Madrid source bundle has 4 baked).
 

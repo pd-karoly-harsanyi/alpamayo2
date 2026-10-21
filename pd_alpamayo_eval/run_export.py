@@ -289,8 +289,9 @@ def main() -> None:
     parser.add_argument("--ablate", nargs="+", choices=["blank", "real"], default=None,
                         help="Camera occlusion: per record one extra forward per camera with its frames replaced by their mean colour (blank) "
                              "and/or, for render arms, by the real frames (real). 6 extra forwards per record. See ablation.py.")
-    parser.add_argument("--attention-per-layer", action="store_true",
-                        help="Also store every expert layer's attention grid (attn_img_layers, ~0.5 MB per record); for short diagnostic runs.")
+    parser.add_argument("--no-attention-per-layer", dest="attention_per_layer", action="store_false",
+                        help="Do not store every expert layer's attention grid (attn_img_layers, float16, ~0.5 MB per record; stored by default "
+                             "since 2026-10-21 because the informative layers are the middle ones, not the stored all/late averages).")
     parser.add_argument("--no-attention", dest="save_attention", action="store_false",
                         help="Do not record the expert's attention over the images (recorded by default into the npz: attn_img, attn_layout, attn_mass, attn_image_mass).")
     args = parser.parse_args()

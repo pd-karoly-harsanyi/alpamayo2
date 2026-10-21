@@ -206,6 +206,7 @@ class Session:
         self._series()
         self.has_attention = any(rec.get("attn_img") is not None for recs in self.columns.values() for rec in recs.values())
         self.has_ablation = {m for m in ("blank", "real") if any(rec.get(f"ablate_{m}") for recs in self.columns.values() for rec in recs.values())}
+        self.has_layers = any(rec.get("attn_img_layers") is not None for recs in self.columns.values() for rec in recs.values())
         self.export_name = export_uri.rstrip("/").rsplit("/", 1)[-1]
         self.projectors = {}
         for name, cal in (self.manifest.get("cameras") or {}).items():
@@ -291,10 +292,10 @@ class Session:
         xyz, _ = self.trajectory.sample(future)
         return t0_rot[0].inv().apply(xyz - t0_xyz), future.size < NUM_FUTURE_STEPS
 
-    def attention_grid(self, col: str, index: int, camera: str, mode: str):
-        return _attention_grid_impl(self, col, index, camera, mode)
+    def attention_grid(self, col: str, index: int, camera: str, mode: str, band: str | None = None):
+        return _attention_grid_impl(self, col, index, camera, mode, band)
 
-    def thumbnail(self, col: str, camera: str, index: int, overlay: bool = False, attention: str = "off") -> bytes:
+    def thumbnail(self, col: str, camera: str, index: int, overlay: bool = False, attention: str = "off", band: str | None = None) -> bytes:
         from PIL import Image
 
         arm = self.arm_of[col]
@@ -311,7 +312,7 @@ class Session:
         projector = self.projectors.get(camera)
         t0 = self.t0s[index]
         rec = self.columns[col].get(t0)
-        heat = self.attention_grid(col, index, camera, attention) if (attention in ATTENTION_MODES and rec is not None) else None
+        heat = self.attention_grid(col, index, camera, attention, band) if (attention in ATTENTION_MODES and rec is not None) else None
         draw = overlay and projector is not None
         if heat is None and not draw:
             return thumb.read_bytes()
@@ -354,22 +355,33 @@ ATTENTION_MODES = {
     "occlusion: real swap": (None, "ablate_real"),
 }
 ABLATION_MODES = {m for m, (_, k) in ATTENTION_MODES.items() if k.startswith("ablate_")}
+# Layer bands of the expert (64 layers), selectable when the run stored every layer (attn_img_layers).
+# Diagnostic run bd4af965 (Madrid, 2026-10-21): early layers diffuse, deep layers sink-dominated, the
+# middle band is where attention sits on content (lead cars, the traffic light).
+LAYER_BANDS = {"mid layers (16-47)": (16, 48), "early layers (0-15)": (0, 16), "late layers (48-63)": (48, 64), "all layers": (0, 64)}
 ATTENTION_HELP = ("Where the trajectory expert's 64 tokens attended on the image, averaged over heads and diffusion steps. "
                   "'minus scene average': this instant's attention minus the mean over every instant and arm of the scene (removes the constant attention-sink pattern); "
                   "'minus real': this arm minus the real arm at the same instant (red = more, blue = less); 'raw': the attention itself, all layers or the last quarter. "
                   "One colour scale per instant across all 24 input frames. Bird's-eye wedges: each camera's share of the image attention (late layers).")
 
 
-def _attention_grids(rec: dict, depth: str) -> dict[tuple[str, int], np.ndarray] | None:
-    """{(camera, frame): (gh, gw)} grids of one record at a layer depth ('all' | 'late')."""
+def _attention_grids(rec: dict, depth) -> dict[tuple[str, int], np.ndarray] | None:
+    """{(camera, frame): (gh, gw)} grids of one record. ``depth``: 'all' | 'late' (the stored averages) or a
+    (first, last+1) layer band, served from ``attn_img_layers`` when the run stored every layer."""
     if rec is None or rec.get("attn_img") is None:
         return None
     layout = json.loads(str(rec["attn_layout"]))
-    flat = np.asarray(rec["attn_img"], dtype=np.float32)[1 if depth == "late" else 0]
+    if isinstance(depth, tuple):
+        layers = rec.get("attn_img_layers")
+        if layers is None:
+            return None
+        flat = np.asarray(layers[depth[0] : depth[1]], dtype=np.float32).mean(0)
+    else:
+        flat = np.asarray(rec["attn_img"], dtype=np.float32)[1 if depth == "late" else 0]
     return {(it["camera"], it["frame"]): flat[it["offset"] : it["offset"] + it["gh"] * it["gw"]].reshape(it["gh"], it["gw"]) for it in layout["images"]}
 
 
-def _session_attention_baseline(s: "Session", depth: str) -> dict[tuple[str, int], np.ndarray]:
+def _session_attention_baseline(s: "Session", depth) -> dict[tuple[str, int], np.ndarray]:
     """Mean attention grid per (camera, frame) over every record of every column; cached on the session."""
     cache = s.__dict__.setdefault("_attn_baseline", {})
     if depth not in cache:
@@ -391,11 +403,14 @@ def _session_attention_baseline(s: "Session", depth: str) -> dict[tuple[str, int
     return cache[depth]
 
 
-def _attention_grid_impl(s: "Session", col: str, index: int, camera: str, mode: str):
-    """(grid, vmax, diverging) for one camera's t0 frame, or None. vmax is shared by the instant's 24 frames."""
+def _attention_grid_impl(s: "Session", col: str, index: int, camera: str, mode: str, band: str | None = None):
+    """(grid, vmax, diverging) for one camera's t0 frame, or None. vmax is shared by the instant's 24 frames.
+    ``band``: a LAYER_BANDS key; used instead of the mode's stored depth when the run has every layer."""
     depth, kind = ATTENTION_MODES[mode]
     if depth is None:  # occlusion modes have no per-pixel map
         return None
+    if s.has_layers and band in LAYER_BANDS:  # the band overrides the mode's stored depth whenever every layer is available
+        depth = LAYER_BANDS[band]
     t0 = s.t0s[index]
     rec = s.columns[col].get(t0)
     grids = _attention_grids(rec, depth)
@@ -638,7 +653,8 @@ def build_app(s: Session):
         try:
             overlay = request.args.get("overlay", "0") == "1"
             attention = request.args.get("attention", "off")
-            return Response(s.thumbnail(col, camera, index, overlay=overlay, attention=attention), mimetype="image/jpeg", headers={"Cache-Control": "max-age=86400"})
+            band = request.args.get("band") or None
+            return Response(s.thumbnail(col, camera, index, overlay=overlay, attention=attention, band=band), mimetype="image/jpeg", headers={"Cache-Control": "max-age=86400"})
         except (KeyError, FileNotFoundError, IndexError):
             return Response(status=404)
 
@@ -730,6 +746,8 @@ def build_app(s: Session):
                          + [{"label": m, "value": m} for m in ATTENTION_MODES if m not in ABLATION_MODES and s.has_attention]
                          + [{"label": m, "value": m} for m in ABLATION_MODES if ATTENTION_MODES[m][1][7:] in s.has_ablation],
                          value="off", clearable=False, disabled=not (s.has_attention or s.has_ablation), style={"width": "210px"}),
+            dcc.Dropdown(id="band", options=[{"label": b, "value": b} for b in LAYER_BANDS], value=next(iter(LAYER_BANDS)), clearable=False,
+                         disabled=not s.has_layers, style={"width": "170px", "display": "block" if s.has_layers else "none"}),
             html.Span("ADE horizon"), dcc.Dropdown(id="horizon", options=[{"label": h, "value": h} for h in HORIZONS], value="6.4 s", clearable=False, style={"width": "170px"}),
             html.Span(id="where", style={"fontWeight": "bold"}),
         ]),
@@ -759,7 +777,7 @@ def build_app(s: Session):
                 return int(np.argmin(np.abs(s.times - click["points"][0]["x"])))
         return idx
 
-    def _view(idx, selected, camera_set, aspect, overlay, attention, horizon, token):
+    def _view(idx, selected, camera_set, aspect, overlay, attention, band, horizon, token):
         if token != page_token:  # a tab left open across a server restart would otherwise show mixed scenes
             n_out = len(cols) * (1 + 3 * MAX_SLOTS + 5)
             banner = "THIS TAB IS STALE: the server now serves a different scene or run. Reload the page (Ctrl-Shift-R)."
@@ -773,7 +791,7 @@ def build_app(s: Session):
         ncol = 3 if len(cameras) >= 3 else len(cameras)
         img_style = {"width": f"{100 / ncol:.3f}%", "display": "block"}
         attention = attention if attention in ATTENTION_MODES else "off"
-        q = f"?overlay={1 if overlay else 0}&attention={attention}"
+        q = f"?overlay={1 if overlay else 0}&attention={attention}&band={band if (s.has_layers and band in LAYER_BANDS) else ''}"
         attention_on = attention != "off"
         ablation = ATTENTION_MODES[attention][1][7:] if attention in ABLATION_MODES else None  # "blank" | "real" | None
         ref = s.columns[s.reference].get(t0)
@@ -829,7 +847,7 @@ def build_app(s: Session):
         Output("stale", "style"),
         Output("stale", "children"),
         Input("idx", "value"), Input("cols", "value"), Input("cameras", "value"), Input("aspect", "value"), Input("overlay", "value"),
-        Input("attention", "value"), Input("horizon", "value"), State("page-token", "data"),
+        Input("attention", "value"), Input("band", "value"), Input("horizon", "value"), State("page-token", "data"),
     )(_view)
     app.view_fn = _view  # the raw function, for tests
 
