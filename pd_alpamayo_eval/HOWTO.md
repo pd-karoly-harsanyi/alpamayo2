@@ -99,6 +99,9 @@ pixi run -e launch submit-nebius run --wait --forward-nebius-credentials -- \
   --export s3://pd-nebius-ray/alpamayo-eval/<export name> [--save-viz] [--arms real rendered] [--seed 42]
 ```
 
+- Instant selection: `--max-instants N` (first N), `--instant-indices i j k`, `--instant-times 0.0 4.2`
+  (clip seconds, nearest instants). The `quick` task (4b) wraps this.
+
 - `--forward-nebius-credentials` reads the local `nebius` profile and forwards the key as job env,
   pinned to the Nebius endpoint, like every pd-fm Nebius job. (The job spec is readable on the
   unauthenticated dashboard while the job record exists; the key is scoped to one bucket.)
@@ -137,6 +140,22 @@ another seed:
 pixi run -e launch submit-nebius run --wait --forward-nebius-credentials -- \
   --export s3://pd-nebius-ray/alpamayo-eval/<export name> --arms real --seed 1
 ```
+
+## 4b. Small experiments in minutes: quick (laptop, dev env)
+
+```
+pixi run -e dev quick madrid --times 0.0 4.2 8.0                        # a few instants, all arms, attention maps
+pixi run -e dev quick madrid --times 4.2 --arms real rendered --ablate blank real   # plus camera occlusion
+pixi run -e dev quick --render-only s3://pd-nebius-ray/alpamayo-eval/<export>/runs/<run id>   # just the pictures
+```
+
+Submits the job for the chosen instants only (`--times` in clip seconds as the dashboard shows them,
+or `--indices`), waits (about 5 min pod start + 2 s per instant and arm, 14 s per occluded instant),
+stages the results and writes one contact sheet per instant to `outputs/quick/<name>/`: front wide,
+front tele, cross left, cross right x arms, with the paths, the attention overlay (value-weighted,
+middle layers) and, with occlusion, the per-camera effect printed on each tile; `summary.txt` has the
+sentences and numbers. Use this before any full-scene run: a hypothesis about a few instants costs
+ten minutes and produces something to look at.
 
 ## 5. Numbers: compare-runs (laptop, dev env)
 

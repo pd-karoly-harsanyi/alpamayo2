@@ -74,6 +74,11 @@ env = { PYTHONPATH = "src:." }
 cmd = "python pd_alpamayo_eval/compare_runs.py"
 env = { PYTHONPATH = "src:." }
 
+# Small experiments: `pixi run -e dev quick madrid --times 0.0 4.2` (submits, waits, writes contact sheets to outputs/quick/)
+[tasks.quick]
+cmd = "python pd_alpamayo_eval/quick.py"
+env = { PYTHONPATH = "src:." }
+
 # Interactive inspection: `pixi run -e dev dashboard <run A> [<run B> ...]`, then open http://localhost:8050
 [tasks.dashboard]
 cmd = "python pd_alpamayo_eval/dashboard.py"

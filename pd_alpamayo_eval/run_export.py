@@ -91,6 +91,12 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if upload_to is None and is_s3(args.export):
         upload_to = f"{args.export.rstrip('/')}/runs/{args.run_id}"
     instants = list_instants(export_dir)
+    if args.instant_indices:
+        instants = [instants[i] for i in args.instant_indices if 0 <= i < len(instants)]
+    elif args.instant_times:
+        t_first = instants[0]
+        instants = [min(instants, key=lambda t: abs((t - t_first) / 1e9 - sec)) for sec in args.instant_times]
+        instants = sorted(set(instants))
     if args.max_instants is not None:
         instants = instants[: args.max_instants]
     if not instants:
@@ -337,6 +343,8 @@ def main() -> None:
     )
     parser.add_argument("--arms", nargs="+", default=None, help="Arms to run (default: every arm in the export).")
     parser.add_argument("--max-instants", type=int, default=None)
+    parser.add_argument("--instant-indices", type=int, nargs="+", default=None, help="Run only these instant indices (0-based, dashboard numbering minus 1).")
+    parser.add_argument("--instant-times", type=float, nargs="+", default=None, help="Run only the instants nearest these clip times in seconds (dashboard 't=').")
     parser.add_argument("--num-traj-samples", type=int, default=1)
     parser.add_argument("--diffusion-steps", type=int, default=10)
     parser.add_argument("--seed", type=int, default=42)
