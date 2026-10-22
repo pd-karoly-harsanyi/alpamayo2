@@ -25,6 +25,9 @@ SCENES: dict[str, list[tuple[str, str, str]]] = {
         ("madrid_full_variations", "alpamayo-run-e368b20f", "v1"),  # v1 replica, seed 42, all arms
         ("madrid_full_variations_v2", "alpamayo-run-e6d4f80e", "seed1"),  # real arm, seed 1 (noise floor)
     ],
+    "madrid_v3": [  # improved-again Madrid replica (no weather arms); runs to be added when they land
+        ("madrid_full_v3", None, ""),
+    ],
     "austria": [
         ("austria_full_variations", "alpamayo-run-17c45f0a", ""),
         ("austria_full_variations_v2", "alpamayo-run-9fc99df6", "v2"),
@@ -38,5 +41,7 @@ def scene_runs(name: str) -> tuple[list[str], list[str]]:
     key = name.lower()
     if key not in SCENES:
         raise SystemExit(f"unknown scene {name!r}; known: {', '.join(SCENES)}")
-    rows = SCENES[key]
+    rows = [r for r in SCENES[key] if r[1]]
+    if not rows:
+        raise SystemExit(f"scene {name!r} has an export but no runs yet; run `quick {name} --times ...` or submit a run and add it to registry.py")
     return [f"{BUCKET}/{export}/runs/{run}" for export, run, _ in rows], [label for _, _, label in rows]
