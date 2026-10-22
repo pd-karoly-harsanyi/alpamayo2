@@ -307,11 +307,12 @@ class Session:
         xyz, _ = self.trajectory.sample(future)
         return t0_rot[0].inv().apply(xyz - t0_xyz), future.size < NUM_FUTURE_STEPS
 
-    def attention_grid(self, col: str, index: int, camera: str, mode: str, band: str | None = None, weighting: str | None = None):
-        return _attention_grid_impl(self, col, index, camera, mode, band, weighting)
+    def attention_grid(self, col: str, index: int, camera: str, mode: str, band: str | None = None, weighting: str | None = None,
+                       scale: str = "frame"):
+        return _attention_grid_impl(self, col, index, camera, mode, band, weighting, scale)
 
     def thumbnail(self, col: str, camera: str, index: int, overlay: bool = False, attention: str = "off", band: str | None = None,
-                  weighting: str | None = None) -> bytes:
+                  weighting: str | None = None, scale: str = "frame") -> bytes:
         from PIL import Image
 
         arm = self.arm_of[col]
@@ -328,7 +329,7 @@ class Session:
         projector = self.projectors.get(camera)
         t0 = self.t0s[index]
         rec = self.columns[col].get(t0)
-        heat = self.attention_grid(col, index, camera, attention, band, weighting) if (attention in ATTENTION_MODES and rec is not None) else None
+        heat = self.attention_grid(col, index, camera, attention, band, weighting, scale) if (attention in ATTENTION_MODES and rec is not None) else None
         draw = overlay and projector is not None
         if heat is None and not draw:
             return thumb.read_bytes()
@@ -355,7 +356,12 @@ class Session:
         return buf.getvalue()
 
 
-HEAT_ALPHA = 0.7  # peak opacity of the attention heatmap
+HEAT_ALPHA = 0.8  # peak opacity of the attention heatmap
+HEAT_GAMMA = 0.7  # v ** gamma before colouring: lifts the mid-range so a map is not one hot cell and nothing else
+HEAT_FLOOR_PCT = 50  # the frame's median is subtracted first: only what stands out from the floor gets colour
+# Colour scale of the heatmap: "instant" = one scale for all 24 frames of the instant (cameras comparable, a
+# camera with a lower peak looks fainter); "frame" = each frame scaled to its own peak (maximum contrast).
+HEAT_SCALES = ("frame", "instant")
 
 # What the heatmap shows. Raw maps are dominated by "attention sinks": a few background patches (sky)
 # that the model uses as global stores, the same on every instant (maps correlate ~0.75 between
@@ -431,7 +437,8 @@ def _session_attention_baseline(s: "Session", depth, weighting: str = "attn") ->
     return cache[ck]
 
 
-def _attention_grid_impl(s: "Session", col: str, index: int, camera: str, mode: str, band: str | None = None, weighting: str | None = None):
+def _attention_grid_impl(s: "Session", col: str, index: int, camera: str, mode: str, band: str | None = None, weighting: str | None = None,
+                         scale: str = "frame"):
     """(grid, vmax, diverging) for one camera's t0 frame, or None. vmax is shared by the instant's 24 frames.
     ``band``: a LAYER_BANDS key; used instead of the mode's stored depth when the run has every layer.
     ``weighting``: a WEIGHTINGS key; 'attention x value norm' needs the run to have recorded it."""
@@ -463,7 +470,10 @@ def _attention_grid_impl(s: "Session", col: str, index: int, camera: str, mode: 
         diverging = True
     if (camera, frame) not in diff:
         return None
-    vmax = max(float(np.abs(v).max()) for v in diff.values()) or 1.0
+    if scale == "frame":
+        vmax = float(np.abs(diff[(camera, frame)]).max()) or 1.0
+    else:
+        vmax = max(float(np.abs(v).max()) for v in diff.values()) or 1.0
     return diff[(camera, frame)], vmax, diverging
 
 
@@ -476,13 +486,15 @@ def _blend_heatmap(im, heat: np.ndarray, vmax: float, diverging: bool = False):
     from matplotlib import colormaps
     from PIL import Image
 
-    g = np.asarray(heat, dtype=np.float32) / vmax
+    g = np.asarray(heat, dtype=np.float32)
     if diverging:
-        v = np.clip(g, -1.0, 1.0)
+        v = np.clip(g / vmax, -1.0, 1.0)
+        v = np.sign(v) * np.abs(v) ** HEAT_GAMMA
         rgba = (colormaps["coolwarm"]((v + 1) / 2) * 255).astype(np.uint8)
         alpha = np.abs(v)
     else:
-        v = np.clip(g, 0.0, 1.0)
+        lo = float(np.percentile(g, HEAT_FLOOR_PCT))
+        v = np.clip((g - lo) / max(vmax - lo, 1e-9), 0.0, 1.0) ** HEAT_GAMMA
         rgba = (colormaps["inferno"](v) * 255).astype(np.uint8)  # (gh, gw, 4)
         alpha = v
     rgba[..., 3] = (alpha * HEAT_ALPHA * 255).astype(np.uint8)
@@ -687,7 +699,8 @@ def build_app(s: Session):
             attention = request.args.get("attention", "off")
             band = request.args.get("band") or None
             weighting = request.args.get("w") or None
-            return Response(s.thumbnail(col, camera, index, overlay=overlay, attention=attention, band=band, weighting=weighting), mimetype="image/jpeg", headers={"Cache-Control": "max-age=86400"})
+            scale = request.args.get("scale") or "frame"
+            return Response(s.thumbnail(col, camera, index, overlay=overlay, attention=attention, band=band, weighting=weighting, scale=scale), mimetype="image/jpeg", headers={"Cache-Control": "max-age=86400"})
         except (KeyError, FileNotFoundError, IndexError):
             return Response(status=404)
 
@@ -783,6 +796,8 @@ def build_app(s: Session):
                          disabled=not s.has_layers, style={"width": "170px", "display": "block" if s.has_layers else "none"}),
             dcc.Dropdown(id="weighting", options=[{"label": w, "value": w} for w in WEIGHTINGS], value=next(iter(WEIGHTINGS)), clearable=False,
                          disabled=not s.has_vw, style={"width": "190px", "display": "block" if s.has_vw else "none"}),
+            dcc.Dropdown(id="scale", options=[{"label": f"scale per {x}", "value": x} for x in HEAT_SCALES], value="frame", clearable=False,
+                         disabled=not s.has_attention, style={"width": "150px", "display": "block" if s.has_attention else "none"}),
             html.Span("ADE horizon"), dcc.Dropdown(id="horizon", options=[{"label": h, "value": h} for h in HORIZONS], value="6.4 s", clearable=False, style={"width": "170px"}),
             html.Span(id="where", style={"fontWeight": "bold"}),
         ]),
@@ -812,7 +827,7 @@ def build_app(s: Session):
                 return int(np.argmin(np.abs(s.times - click["points"][0]["x"])))
         return idx
 
-    def _view(idx, selected, camera_set, aspect, overlay, attention, band, weighting, horizon, token):
+    def _view(idx, selected, camera_set, aspect, overlay, attention, band, weighting, scale, horizon, token):
         if token != page_token:  # a tab left open across a server restart would otherwise show mixed scenes
             n_out = len(cols) * (1 + 3 * MAX_SLOTS + 5)
             banner = "THIS TAB IS STALE: the server now serves a different scene or run. Reload the page (Ctrl-Shift-R)."
@@ -827,7 +842,7 @@ def build_app(s: Session):
         img_style = {"width": f"{100 / ncol:.3f}%", "display": "block"}
         attention = attention if attention in ATTENTION_MODES else "off"
         q = (f"?overlay={1 if overlay else 0}&attention={attention}&band={band if (s.has_layers and band in LAYER_BANDS) else ''}"
-             f"&w={weighting if (s.has_vw and weighting in WEIGHTINGS) else ''}")
+             f"&w={weighting if (s.has_vw and weighting in WEIGHTINGS) else ''}&scale={scale if scale in HEAT_SCALES else 'frame'}")
         attention_on = attention != "off"
         ablation = ATTENTION_MODES[attention][1][7:] if attention in ABLATION_MODES else None  # "blank" | "real" | None
         ref = s.columns[s.reference].get(t0)
@@ -883,7 +898,7 @@ def build_app(s: Session):
         Output("stale", "style"),
         Output("stale", "children"),
         Input("idx", "value"), Input("cols", "value"), Input("cameras", "value"), Input("aspect", "value"), Input("overlay", "value"),
-        Input("attention", "value"), Input("band", "value"), Input("weighting", "value"), Input("horizon", "value"), State("page-token", "data"),
+        Input("attention", "value"), Input("band", "value"), Input("weighting", "value"), Input("scale", "value"), Input("horizon", "value"), State("page-token", "data"),
     )(_view)
     app.view_fn = _view  # the raw function, for tests
 
