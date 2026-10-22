@@ -33,10 +33,15 @@ def is_s3(uri: str | os.PathLike) -> bool:
 def client(profile: str | None = None, endpoint_url: str | None = None, region: str | None = None):
     import boto3
 
+    from botocore.config import Config
+
     session = boto3.Session(profile_name=profile)
     if endpoint_url is None and profile == "nebius":
         endpoint_url, region = NEBIUS_ENDPOINT, region or NEBIUS_REGION
-    return session.client("s3", endpoint_url=endpoint_url, region_name=region)
+    # Laptop links drop: retry each request up to 10 times with backoff and allow slow reads, so a mirror or
+    # staging survives a flaky connection instead of dying on the first ReadTimeout.
+    config = Config(retries={"max_attempts": 10, "mode": "adaptive"}, connect_timeout=30, read_timeout=120, max_pool_connections=32)
+    return session.client("s3", endpoint_url=endpoint_url, region_name=region, config=config)
 
 
 def client_from_env():
@@ -120,6 +125,18 @@ def copy_between_stores(src, dst, src_uri: str, dst_uri: str, log=print, workers
             todo.append((key, dst_key))
 
     def _copy(pair: tuple[str, str]) -> None:
+        import time as _time
+
+        for attempt in range(5):  # on top of botocore's per-request retries: a whole-object retry
+            try:
+                return _copy_once(pair)
+            except Exception as exc:  # noqa: BLE001
+                if attempt == 4:
+                    raise
+                log(f"  retry {attempt + 1} for {pair[0]}: {type(exc).__name__}")
+                _time.sleep(2 * (attempt + 1))
+
+    def _copy_once(pair: tuple[str, str]) -> None:
         key, dst_key = pair
         body = src.get_object(Bucket=src_bucket, Key=key)["Body"].read()
         dst.put_object(Bucket=dst_bucket, Key=dst_key, Body=body)
