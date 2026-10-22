@@ -364,7 +364,7 @@ HEAT_ALPHA = 0.7  # peak opacity of the attention heatmap
 ATTENTION_MODES = {
     "minus scene average": ("all", "baseline"),
     "minus real (paired)": ("all", "paired"),
-    "raw (sink-dominated)": ("all", "raw"),
+    "raw": ("all", "raw"),  # with 'attention x value norm' this is a usable map; with plain attention it is sink-dominated
     # camera occlusion (causal, needs a run made with --ablate): no image heatmap, the bird's-eye wedges carry the numbers
     "occlusion: blank camera": (None, "ablate_blank"),
     "occlusion: real swap": (None, "ablate_real"),
@@ -378,6 +378,8 @@ LAYER_BANDS = {"mid layers (16-47)": (16, 48), "early layers (0-15)": (0, 16), "
 # to the expert's output; attention sinks have large weights but near-zero values, so they drop out).
 WEIGHTINGS = {"attention x value norm": "vw", "attention": "attn"}
 ATTENTION_HELP = ("Where the trajectory expert's 64 tokens attended on the image, averaged over heads and diffusion steps. "
+                  "Weighting 'attention x value norm' (default when recorded) measures each token's actual contribution and removes the attention sinks "
+                  "(sky/foliage patches with large weights but empty values); plain 'attention' is sink-dominated. Layers: the middle band is where attention sits on content. "
                   "'minus scene average': this instant's attention minus the mean over every instant and arm of the scene (removes the constant attention-sink pattern); "
                   "'minus real': this arm minus the real arm at the same instant (red = more, blue = less); 'raw': the attention itself, all layers or the last quarter. "
                   "One colour scale per instant across all 24 input frames. Bird's-eye wedges: each camera's share of the image attention (late layers).")
