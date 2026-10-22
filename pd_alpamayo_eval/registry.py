@@ -22,11 +22,13 @@ SCENES: dict[str, list[tuple[str, str, str]]] = {
     "madrid": [
         ("madrid_full_variations_v2", "alpamayo-run-eedc9a2d", ""),  # v2 replica, seed 42, all arms, expert attention with every layer stored
         ("madrid_full_variations_v2", "alpamayo-run-d931ddaf", "+"),  # camera occlusion (blank + real swap) for real and rendered; merged into the columns above
+        ("madrid_full_v3", "alpamayo-run-405e3f8a", "v3"),  # v3 replica (red light fixed), real + rendered, attention x value norm
         ("madrid_full_variations", "alpamayo-run-e368b20f", "v1"),  # v1 replica, seed 42, all arms
         ("madrid_full_variations_v2", "alpamayo-run-e6d4f80e", "seed1"),  # real arm, seed 1 (noise floor)
     ],
-    "madrid_v3": [  # improved-again Madrid replica (no weather arms); runs to be added when they land
-        ("madrid_full_v3", None, ""),
+    "madrid_v3": [  # improved-again Madrid replica (no weather arms), on its own, with the seed floor
+        ("madrid_full_v3", "alpamayo-run-405e3f8a", ""),
+        ("madrid_full_variations_v2", "alpamayo-run-e6d4f80e", "seed1"),
     ],
     "austria": [
         ("austria_full_variations", "alpamayo-run-17c45f0a", ""),

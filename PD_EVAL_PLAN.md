@@ -474,6 +474,29 @@ light on 17 of the 28 instants). Both renders show the same defect (light not re
 cameras agree. The occlusion run is the slow one (75 s per instant: 13 forwards each with CPU
 preprocessing), so it is a per-hypothesis tool, not a per-scene default; the attention run (2 s per
 record) stays the screening tool and the occlusion run the proof.
+
+**Madrid v3 (2026-10-22, bundle `b96107b7-1ddb-4925-8c09-bb3c1b6b90b2`, artifact `3fedc926`, export
+`madrid_full_v3`, run `alpamayo-run-405e3f8a`, real + rendered, no weather arms).** The replica was
+re-trained with the traffic-light finding in hand. Checked first with a 10-minute `quick` run on five v2
+flip instants (`alpamayo-run-f82958fd`): the rendered tele frame now shows the red lamp, the attention
+sits on it as on the real frame, and the rendered sentence says "stop due to the red traffic light"
+(paired ADE 0.14 m where v2 had 1.70 m). Full clip, reference = real (bit-identical to v2's real arm):
+
+| Madrid, clear render | paired ADE vs real, median / p90 | distance bias | stop-vs-go flips (real stop, render go) | red-light instants (n=9): paired ADE median, share > 1 m |
+|---|---|---|---|---|
+| v2 (`eedc9a2d`) | 2.08 / 7.08 m | +0.6 m, 49 / 44 % | 28 of 185 | 1.95 m, 89 % |
+| **v3** (`405e3f8a`) | **1.04 / 6.75 m** | -0.7 m, 25 / 46 % | **15 of 185** | **0.14 m, 22 %** |
+| seed floor (`e6d4f80e`) | 2.29 / 7.65 m | -2.9 m | (seed) | |
+
+Reading: (1) the median paired ADE halved and is now well under the seed floor (1.04 vs 2.29 m): on
+the typical instant the v3 render is closer to the real prediction than a second seed is; (2) the
+red-light instants are fixed outright (0.14 m median, one instant above 1 m); (3) the tail is not
+gone (p90 6.75 m) and 15 flips remain, now at the green phase ("resume" vs "accelerate" while the
+lead car moves), which is the model's own stop-vs-go bimodality at a green light, the same thing the
+seed floor shows; (4) the distance bias flipped sign to slightly shorter (46 % shorter vs 25 %
+longer), to be watched with weather arms when they exist for v3. First case in this project of a
+replica change producing a measurable, explained behavioural improvement; the attention screening
+plus occlusion found the defect, the quick run confirmed the fix in ten minutes before the full run.
  For the eye: the
 sentence differs from the old render on 36-42 % of instants (vs 70 % between seeds), consistent
 with (1). Videos: `outputs/italy_full_variations_v2_928b4727.mp4`,

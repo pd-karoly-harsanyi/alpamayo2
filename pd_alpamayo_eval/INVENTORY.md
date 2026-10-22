@@ -25,6 +25,7 @@ One row per (scene, render version, arms, seed). "v1" = first replica training (
 | 10 | Madrid intersection | v2 | real, rendered, rainy, snowy **+ expert attention** | 42 | `alpamayo-run-ed10a713` | `madrid_full_variations_v2` | 10-21 | = #7 bit for bit, plus attention maps (all/late layer averages only). `alpamayo-run-f7bf3560` = 2-instant smoke; `alpamayo-run-9c49cd62` = accidental resubmit, identical in every record (predictions and maps); `alpamayo-run-bd4af965` = 2 instants with every layer stored (diagnostic: middle layers are the informative ones) |
 | 11 | Madrid intersection | v2 | real, rendered, rainy, snowy **+ attention, every layer** | 42 | `alpamayo-run-eedc9a2d` | `madrid_full_variations_v2` | 10-21 | = #7 bit for bit; `attn_img_layers` (64 layers) in every npz; **the `--scene madrid` reference**. Supersedes #10 for the dashboard |
 | 12 | Madrid intersection | v2 | real, rendered **+ camera occlusion (blank, real swap)** | 42 | `alpamayo-run-d931ddaf` | `madrid_full_variations_v2` | 10-21 | main predictions = #11; per camera the ablated prediction and sentence; merged into `--scene madrid` (label `+`). `alpamayo-run-838d38d1` = first attempt, node died, nothing uploaded |
+| 13 | Madrid intersection | **v3** | real, rendered + attention (value-weighted, every layer) | 42 | `alpamayo-run-405e3f8a` | `madrid_full_v3` | 10-22 | red light now rendered: paired ADE 1.04 / 6.75 m (v2 2.08 / 7.08, floor 2.29 / 7.65); 15 flips left of 28; `alpamayo-run-f82958fd` = 5-instant quick on the flip instants |
 | 0 | Italy 5-8 s window | v1 (no variations) | real, rendered | 42 | `alpamayo-run-0d74dd90` | `w5s_3s` | 10-13 | first end-to-end test only |
 
 Because the real arm is deterministic for a given seed (#5 = #1, #6 = #4, #7 = #3, #9 duplicate), a
@@ -120,6 +121,7 @@ and `<t0_ns>_<arm>.png` (NVIDIA's six-camera figure) where `--save-viz` was used
 | `alpamayo-run-ed10a713` | `madrid_full_variations_v2` | all four | 42 | Madrid with expert attention (npz has `attn_img`, `attn_layout`, `attn_mass`, `attn_image_mass`); predictions identical to `99bb841a`; `alpamayo-run-f7bf3560` = 2-instant smoke |
 | `alpamayo-run-eedc9a2d` | `madrid_full_variations_v2` | all four | 42 | same plus `attn_img_layers` (all 64 expert layers); the dashboard reference for Madrid |
 | `alpamayo-run-d931ddaf` | `madrid_full_variations_v2` | real, rendered | 42 | camera occlusion: json `ablate_blank` / `ablate_real` per camera, npz `ablate_blank_xyz` / `ablate_real_xyz` (6, 64, 3); merged into the Madrid dashboard scene |
+| `alpamayo-run-405e3f8a` | `madrid_full_v3` | real, rendered | 42 | v3 replica; attention with every layer and value weighting; `--scene madrid` column `rendered@v3`, `--scene madrid_v3` reference |
 | `alpamayo-run-0d74dd90` | `w5s_3s` | real, rendered | 42 | first end-to-end test, with PNGs |
 
 Earlier infrastructure jobs (no results of interest): `alpamayo-probe-f5d8ec4f` (env + weights),

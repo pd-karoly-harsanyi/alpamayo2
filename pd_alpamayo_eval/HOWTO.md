@@ -243,8 +243,10 @@ run `alpamayo-run-e368b20f`; Austria `austria_full_variations` run `alpamayo-run
 Improved replicas (2026-10-19): Italy `italy_full_variations_v2` run `alpamayo-run-928b4727`,
 Austria `austria_full_variations_v2` run `alpamayo-run-9fc99df6` + floor `alpamayo-run-b357ae61`
 (seed 1), Madrid `madrid_full_variations_v2` run `alpamayo-run-99bb841a` + floor `alpamayo-run-e6d4f80e`
-(seed 1) + the same predictions with expert attention `alpamayo-run-ed10a713` (2026-10-21; the
-reference run of `--scene madrid`).
+(seed 1) + the same predictions with expert attention `alpamayo-run-ed10a713` / every layer
+`alpamayo-run-eedc9a2d` (the reference run of `--scene madrid`) + occlusion `alpamayo-run-d931ddaf`;
+Madrid v3 `madrid_full_v3` run `alpamayo-run-405e3f8a` (2026-10-22; `rendered@v3` in `--scene madrid`,
+reference of `--scene madrid_v3`).
 
 ## 9. Tests
 
