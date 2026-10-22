@@ -73,6 +73,16 @@ def test_recorder_matches_eager_and_keeps_outputs(impl):
     assert np.allclose(per_layer[:, N_PREFIX - 5 : N_PREFIX], 0.0)  # masked positions get nothing
 
 
+def test_value_weighted_rows():
+    model = _tiny("sdpa")
+    rec = ExpertAttentionRecorder(SimpleNamespace(expert=SimpleNamespace(expert=model)))
+    _drive(model, rec)
+    plain, vw = rec.per_layer(), rec.per_layer(value_weighted=True)
+    assert plain.shape == vw.shape and np.allclose(vw.sum(1), 1.0, atol=1e-5)
+    assert np.allclose(vw[:, N_PREFIX - 5 : N_PREFIX], 0.0)  # masked keys contribute nothing either way
+    assert not np.allclose(plain, vw)  # value norms differ across tokens, so the weighting changes the map
+
+
 def test_recorder_averages_over_steps():
     model = _tiny("sdpa")
     rec = ExpertAttentionRecorder(SimpleNamespace(expert=SimpleNamespace(expert=model)))

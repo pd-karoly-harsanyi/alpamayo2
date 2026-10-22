@@ -91,21 +91,32 @@ class ExpertAttentionRecorder:
 
     def reset(self) -> None:
         self.sums: list[torch.Tensor | None] = [None] * self.num_layers
+        self.sums_vw: list[torch.Tensor | None] = [None] * self.num_layers  # attention x value norm
         self.counts = [0] * self.num_layers
         self.query_len: int | None = None
 
-    def _record(self, module, query, key, attention_mask, kwargs, weights: torch.Tensor | None = None) -> None:
+    def _record(self, module, query, key, value, attention_mask, kwargs, weights: torch.Tensor | None = None) -> None:
         layer = self.layers[id(module)]
         with torch.no_grad():
             w = weights if weights is not None else attention_weights(module, query, key, attention_mask, kwargs)
             w = w[..., : key.shape[-2]] if weights is not None else w
-            v = w.float().mean(dim=(0, 1, 2))  # (Lk,): mean over batch, heads, trajectory tokens
+            w = w.float()
+            v = w.mean(dim=(0, 1, 2))  # (Lk,): mean over batch, heads, trajectory tokens
+            # Attention x value norm: a token's actual contribution to the layer output. Attention sinks have
+            # large weights but near-zero values (that is how they act as no-ops), so this removes them.
+            vn = value.float().norm(dim=-1)  # (b, h_kv, Lk)
+            groups = w.shape[1] // vn.shape[1]
+            if groups > 1:
+                vn = vn.repeat_interleave(groups, dim=1)
+            vw = (w * vn[:, :, None, : w.shape[-1]]).mean(dim=(0, 1, 2))
             self.query_len = int(query.shape[2])
             if self.sums[layer] is None or self.sums[layer].shape != v.shape:
                 self.sums[layer] = v.clone()
+                self.sums_vw[layer] = vw.clone()
                 self.counts[layer] = 1
             else:
                 self.sums[layer] += v
+                self.sums_vw[layer] += vw
                 self.counts[layer] += 1
 
     @contextmanager
@@ -126,7 +137,7 @@ class ExpertAttentionRecorder:
         def wrapped(module, query, key, value, attention_mask, *args, **kwargs):
             out = orig(module, query, key, value, attention_mask, *args, **kwargs)
             if id(module) in recorder.layers:
-                recorder._record(module, query, key, attention_mask, kwargs)
+                recorder._record(module, query, key, value, attention_mask, kwargs)
             return out
 
         ALL_ATTENTION_FUNCTIONS[self.impl] = wrapped
@@ -147,7 +158,7 @@ class ExpertAttentionRecorder:
                 out = orig(module, query, key, value, attention_mask, *args, **kwargs)
                 if id(module) in recorder.layers:
                     weights = out[1] if isinstance(out, tuple) and len(out) > 1 and out[1] is not None else None
-                    recorder._record(module, query, key, attention_mask, kwargs, weights)
+                    recorder._record(module, query, key, value, attention_mask, kwargs, weights)
                 return out
 
             return wrapped
@@ -164,13 +175,17 @@ class ExpertAttentionRecorder:
             for mod, fn in originals.items():
                 mod.eager_attention_forward = fn
 
-    def per_layer(self) -> np.ndarray:
-        """(L, K) mean attention over the keys, per layer; K = cache length + expert tokens."""
+    def per_layer(self, value_weighted: bool = False) -> np.ndarray:
+        """(L, K) mean attention over the keys, per layer; K = cache length + expert tokens.
+        ``value_weighted``: attention x value norm instead (each layer's row normalised to sum 1)."""
         rows = []
-        for s, c in zip(self.sums, self.counts):
+        for s, c in zip(self.sums_vw if value_weighted else self.sums, self.counts):
             if s is None:
                 raise RuntimeError("a layer recorded nothing; was the expert run inside recording()?")
-            rows.append((s / c).cpu().numpy())
+            r = (s / c).cpu().numpy()
+            if value_weighted:
+                r = r / (r.sum() or 1.0)
+            rows.append(r)
         k = min(len(r) for r in rows)
         return np.stack([r[:k] for r in rows]).astype(np.float32)
 
@@ -206,6 +221,9 @@ class ExpertAttentionRecorder:
         out = {}
         if per_layer and layout:
             out["attn_img_layers"] = np.concatenate([a[:, it_s:it_e] for it_s, it_e in image_spans], axis=1).astype(np.float16)
+            vw = self.per_layer(value_weighted=True)
+            out["attn_vw_img_layers"] = np.concatenate([vw[:, it_s:it_e] for it_s, it_e in image_spans], axis=1).astype(np.float16)
+            out["attn_vw_mass"] = np.stack([vw[:, m].sum(1) for m in (is_image, is_prompt_other, is_generated, is_self)], axis=1).astype(np.float32)
         return out | {
             "attn_img": np.stack([grids_all, grids_late]).astype(np.float16),
             "attn_layout": np.array(json.dumps({"images": layout, "late_layers": late, "num_layers": n_layers, "query_len": q})),
