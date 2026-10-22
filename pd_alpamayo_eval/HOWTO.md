@@ -202,26 +202,14 @@ fields show on the same cards.
   aspect, zoomable, camera FOV wedges around the ego with the shown camera in gold), the instant's ADE
   table, and that arm's error-over-time plot (click to jump; all on one scale).
 - Cameras dropdown: front wide, the front three, all six used, or any single camera.
-- **Model attention** dropdown (runs made after 2026-10-20 only): a heatmap of where the trajectory
-  expert attended on each image (its 64 trajectory tokens over the image patch tokens, averaged over
-  heads and diffusion steps; one colour scale per instant across all 24 input frames, so a bright camera
-  is bright because it got more attention than the others). Raw maps are dominated by attention sinks
-  (a few sky patches the model uses as global stores, the same on every instant), so the default view
-  is **minus scene average** (this instant minus the mean over all instants and arms of the scene);
-  **minus real** shows this arm minus the real arm at the same instant (red = more, blue = less);
-  **raw, all layers / late layers** is the attention itself. The bird's-eye camera wedges are shaded by
-  each camera's share of the image attention (hover for the percentage) and the table gets a row with
-  the mass on images / sentence / prompt. Runs without the recording show the dropdown greyed out.
-  Caveat (Madrid, 2026-10-21): the bright cells are mostly attention sinks on low-information patches
-  (sky, foliage) that move with the content, so no per-position correction removes them; the late
-  layers of the expert read global summaries parked there rather than looking at pixels. Treat the
-  heatmaps as "where the expert reads", not as visual evidence; the occlusion views are the causal
-  readout. `--attention-per-layer` on a short run stores every layer to check whether early layers are
-  localised. Verdict from that run (`alpamayo-run-bd4af965`): early layers diffuse, layers 48-63
-  sink-dominated, the **middle band (16-47)** attends to content (lead cars, the red traffic light), so
-  every run since stores all 64 layers (`attn_img_layers`, ~0.5 MB per record; `--no-attention-per-layer`
-  to skip) and the dashboard shows a **layers** dropdown (mid / early / late / all) next to the mode
-  when the run has them; "mid layers" is the default.
+- **overlay** dropdown: `model attention` = where the trajectory expert read from each image
+  (attention x value norm so the attention sinks drop out, middle layers, each frame scaled to its own
+  peak above its floor; runs made before 2026-10-22 only have plain attention and say so); the
+  bird's-eye wedges are shaded by each camera's share and the table gets an attention row.
+  `occlusion: blank camera` / `occlusion: real swap` (runs made with `--ablate`): wedges shaded by the
+  causal effect of each camera, hover for metres. One control, no sub-options; the underlying choices
+  (layer band, weighting, scale, scene-average subtraction) remain available as URL parameters of the
+  image route for scripts.
 - Scene-level numbers are not on the dashboard; use `compare-runs` (section 5).
 - After pulling new code: restart the server AND hard-reload the tab (Ctrl-Shift-R). A stale tab gives
   `IndexError ... _prepare_grouping` 500s in the server log.

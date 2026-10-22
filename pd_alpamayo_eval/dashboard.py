@@ -383,12 +383,11 @@ LAYER_BANDS = {"mid layers (16-47)": (16, 48), "early layers (0-15)": (0, 16), "
 # Weighting of the map: plain attention weights, or attention x value norm (the token's actual contribution
 # to the expert's output; attention sinks have large weights but near-zero values, so they drop out).
 WEIGHTINGS = {"attention x value norm": "vw", "attention": "attn"}
-ATTENTION_HELP = ("Where the trajectory expert's 64 tokens attended on the image, averaged over heads and diffusion steps. "
-                  "Weighting 'attention x value norm' (default when recorded) measures each token's actual contribution and removes the attention sinks "
-                  "(sky/foliage patches with large weights but empty values); plain 'attention' is sink-dominated. Layers: the middle band is where attention sits on content. "
-                  "'minus scene average': this instant's attention minus the mean over every instant and arm of the scene (removes the constant attention-sink pattern); "
-                  "'minus real': this arm minus the real arm at the same instant (red = more, blue = less); 'raw': the attention itself, all layers or the last quarter. "
-                  "One colour scale per instant across all 24 input frames. Bird's-eye wedges: each camera's share of the image attention (late layers).")
+ATTENTION_HELP = ("model attention: where the trajectory expert's 64 tokens read from the image (attention x value norm, so attention sinks drop out; "
+                  "middle layers of the expert, where attention sits on content; averaged over heads and diffusion steps; each frame scaled to its own peak "
+                  "above its floor, so a bright spot means 'this stands out in this camera', not 'this camera matters most'). "
+                  "occlusion: causal, from a run made with --ablate: the bird's-eye wedges show how much the prediction moves when a camera is blanked, "
+                  "or how much of the gap to the real prediction closes when a camera is swapped back to real.")
 
 
 def _attention_grids(rec: dict, depth, weighting: str = "attn") -> dict[tuple[str, int], np.ndarray] | None:
@@ -787,17 +786,14 @@ def build_app(s: Session):
             html.Span("arms"), dcc.Checklist(id="cols", options=[{"label": c, "value": c} for c in cols], value=cols[:4], inline=True),
             dcc.Checklist(id="aspect", options=[{"label": "stretch lateral axis", "value": "stretch"}], value=[], inline=True),
             dcc.Checklist(id="overlay", options=[{"label": "paths on images", "value": "on"}], value=["on"], inline=True),
-            html.Span("model attention" if (s.has_attention or s.has_ablation) else "model attention (not recorded in these runs)", title=ATTENTION_HELP),
+            # ONE overlay control. "model attention" is fixed to the combination that reads well: attention x value
+            # norm (sinks removed), middle layers, each frame scaled to its own peak above its floor. Runs made
+            # before the value weighting existed fall back to plain attention and say so in the label.
+            html.Span("overlay", title=ATTENTION_HELP),
             dcc.Dropdown(id="attention", options=[{"label": "off", "value": "off"}]
-                         + [{"label": m, "value": m} for m in ATTENTION_MODES if m not in ABLATION_MODES and s.has_attention]
+                         + ([{"label": "model attention" + ("" if s.has_vw else " (plain, older run: weaker)"), "value": "raw"}] if s.has_attention else [])
                          + [{"label": m, "value": m} for m in ABLATION_MODES if ATTENTION_MODES[m][1][7:] in s.has_ablation],
-                         value="off", clearable=False, disabled=not (s.has_attention or s.has_ablation), style={"width": "210px"}),
-            dcc.Dropdown(id="band", options=[{"label": b, "value": b} for b in LAYER_BANDS], value=next(iter(LAYER_BANDS)), clearable=False,
-                         disabled=not s.has_layers, style={"width": "170px", "display": "block" if s.has_layers else "none"}),
-            dcc.Dropdown(id="weighting", options=[{"label": w, "value": w} for w in WEIGHTINGS], value=next(iter(WEIGHTINGS)), clearable=False,
-                         disabled=not s.has_vw, style={"width": "190px", "display": "block" if s.has_vw else "none"}),
-            dcc.Dropdown(id="scale", options=[{"label": f"scale per {x}", "value": x} for x in HEAT_SCALES], value="frame", clearable=False,
-                         disabled=not s.has_attention, style={"width": "150px", "display": "block" if s.has_attention else "none"}),
+                         value="off", clearable=False, disabled=not (s.has_attention or s.has_ablation), style={"width": "230px"}),
             html.Span("ADE horizon"), dcc.Dropdown(id="horizon", options=[{"label": h, "value": h} for h in HORIZONS], value="6.4 s", clearable=False, style={"width": "170px"}),
             html.Span(id="where", style={"fontWeight": "bold"}),
         ]),
@@ -827,7 +823,7 @@ def build_app(s: Session):
                 return int(np.argmin(np.abs(s.times - click["points"][0]["x"])))
         return idx
 
-    def _view(idx, selected, camera_set, aspect, overlay, attention, band, weighting, scale, horizon, token):
+    def _view(idx, selected, camera_set, aspect, overlay, attention, horizon, token):
         if token != page_token:  # a tab left open across a server restart would otherwise show mixed scenes
             n_out = len(cols) * (1 + 3 * MAX_SLOTS + 5)
             banner = "THIS TAB IS STALE: the server now serves a different scene or run. Reload the page (Ctrl-Shift-R)."
@@ -841,8 +837,9 @@ def build_app(s: Session):
         ncol = 3 if len(cameras) >= 3 else len(cameras)
         img_style = {"width": f"{100 / ncol:.3f}%", "display": "block"}
         attention = attention if attention in ATTENTION_MODES else "off"
-        q = (f"?overlay={1 if overlay else 0}&attention={attention}&band={band if (s.has_layers and band in LAYER_BANDS) else ''}"
-             f"&w={weighting if (s.has_vw and weighting in WEIGHTINGS) else ''}&scale={scale if scale in HEAT_SCALES else 'frame'}")
+        band = "mid layers (16-47)" if s.has_layers else ""
+        weighting = "attention x value norm" if s.has_vw else ""
+        q = f"?overlay={1 if overlay else 0}&attention={attention}&band={band}&w={weighting}&scale=frame"
         attention_on = attention != "off"
         ablation = ATTENTION_MODES[attention][1][7:] if attention in ABLATION_MODES else None  # "blank" | "real" | None
         ref = s.columns[s.reference].get(t0)
@@ -898,7 +895,7 @@ def build_app(s: Session):
         Output("stale", "style"),
         Output("stale", "children"),
         Input("idx", "value"), Input("cols", "value"), Input("cameras", "value"), Input("aspect", "value"), Input("overlay", "value"),
-        Input("attention", "value"), Input("band", "value"), Input("weighting", "value"), Input("scale", "value"), Input("horizon", "value"), State("page-token", "data"),
+        Input("attention", "value"), Input("horizon", "value"), State("page-token", "data"),
     )(_view)
     app.view_fn = _view  # the raw function, for tests
 
