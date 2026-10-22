@@ -78,8 +78,9 @@ FRUSTUM_LENGTH_M = {30: 9.0, 70: 6.0, 120: 5.0}  # by horizontal FOV; drawn at t
 _FOV_RE = re.compile(r"(\d+)fov")
 
 
-def _stage(uri_or_dir: str, cache: Path, skip_suffixes=(".png",)) -> Path:
-    """Local directory for a run or export; s3:// locations are mirrored into the cache once."""
+def _stage(uri_or_dir: str, cache: Path, skip_suffixes=(".png",), download: bool = True) -> Path:
+    """Local directory for a run or export; s3:// locations are mirrored into the cache once.
+    ``download=False`` only resolves the cache path (for callers that staged the needed files themselves)."""
     if not is_s3(uri_or_dir):
         path = Path(uri_or_dir).expanduser()
         if not path.is_dir():
@@ -87,6 +88,8 @@ def _stage(uri_or_dir: str, cache: Path, skip_suffixes=(".png",)) -> Path:
         return path
     bucket, prefix = parse_s3(uri_or_dir)
     local = cache / bucket / prefix
+    if not download:
+        return local
     profile = "nebius" if bucket == NEBIUS_BUCKET else "default"
     s3 = client(profile)
     # NVIDIA's per-instant PNGs are large and not needed for the video.

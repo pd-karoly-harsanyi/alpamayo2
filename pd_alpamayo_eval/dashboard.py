@@ -136,8 +136,9 @@ CAMERA_SETS = {
 class Session:
     """Everything the callbacks need, loaded once."""
 
-    def __init__(self, run_uris: list[str], cache: Path, labels: list[str] | None = None):
+    def __init__(self, run_uris: list[str], cache: Path, labels: list[str] | None = None, stage_exports: bool = True):
         self.cache = cache
+        self._stage_exports = stage_exports  # False: the caller already staged the frames it needs (quick)
         self.columns: dict[str, dict[int, dict]] = {}
         self.arm_of: dict[str, str] = {}
         self.run_of: dict[str, str] = {}
@@ -158,7 +159,7 @@ class Session:
                 export_uri = run_export
             name = run_export.rstrip("/").rsplit("/", 1)[-1]
             if run_export not in export_dirs:
-                export_dirs[run_export] = _stage(run_export, cache, skip_suffixes=())
+                export_dirs[run_export] = _stage(run_export, cache, skip_suffixes=(), download=self._stage_exports)
                 if not (export_dirs[run_export] / MANIFEST_NAME).is_file():
                     raise SystemExit(f"{export_dirs[run_export]} has no {MANIFEST_NAME}")
             if labels:

@@ -56,13 +56,50 @@ def submit(run_args: list[str], repo: Path) -> str:
     return run_id
 
 
+def stage_needed(run_uri: str, cache: Path) -> None:
+    """Stage the run and ONLY the t0 frames its records need (not the whole export: 2600 images for 10 needed)."""
+    import json
+
+    from pd_alpamayo_eval.export_common import MANIFEST_NAME
+    from pd_alpamayo_eval.make_video import _load_run, _stage
+    from pd_alpamayo_eval.s3util import NEBIUS_BUCKET, client, parse_s3
+
+    run_dir = _stage(run_uri, cache)  # small: json/npz/results
+    summary, records = _load_run(run_dir)
+    export_uri = summary.get("export")
+    if not export_uri or not export_uri.startswith("s3://"):
+        return
+    bucket, prefix = parse_s3(export_uri)
+    s3 = client("nebius" if bucket == NEBIUS_BUCKET else "default")
+    local = cache / bucket / prefix
+    local.mkdir(parents=True, exist_ok=True)
+    if not (local / MANIFEST_NAME).is_file():
+        s3.download_file(bucket, f"{prefix}/{MANIFEST_NAME}", str(local / MANIFEST_NAME))
+    manifest = json.loads((local / MANIFEST_NAME).read_text(encoding="utf-8"))
+    frames_of = {int(inst["t0_ns"]): inst["frames"] for inst in manifest["instants"]}
+    wanted = []
+    for (t0, arm) in records:
+        for camera, ts in frames_of.get(int(t0), {}).items():
+            wanted.append(f"{arm}/{camera}/{int(ts[-1])}.jpg")
+    n = 0
+    for rel in wanted:
+        dst = local / rel
+        if dst.is_file():
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        s3.download_file(bucket, f"{prefix}/{rel}", str(dst))
+        n += 1
+    print(f"staged {n} frames of {len(wanted)} needed for {len(records)} records", flush=True)
+
+
 def render(run_uri: str, out_dir: Path, cache: Path) -> list[Path]:
     from PIL import Image, ImageDraw
 
     from pd_alpamayo_eval.dashboard import CAMERA_LABELS, Session, _ablation_effects
     from pd_alpamayo_eval.make_video import _cot_text
 
-    s = Session([run_uri], cache)
+    stage_needed(run_uri, cache)
+    s = Session([run_uri], cache, stage_exports=False)
     arms = list(s.columns)
     weighting = "attention x value norm" if s.has_vw else "attention"
     band = "mid layers (16-47)" if s.has_layers else None
