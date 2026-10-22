@@ -182,8 +182,10 @@ pixi run -e dev dashboard \
 ```
 
 then open http://localhost:8050 (one server shows one scene; start a second on `--port 8051` for
-another). Nothing is rerun: the dashboard reads the stored results, staged into the laptop cache on
-first use. `--scene` takes the run list from `pd_alpamayo_eval/registry.py`; add a row there when a
+another). Nothing is rerun: the dashboard reads the stored results (staged into the laptop cache on
+first use); since 2026-10-22 the export images are NOT staged up front but fetched per frame on first
+view, so a scene with a new export opens in seconds (the first pass through the clip is slower while
+frames arrive; they stay in the cache). `--scene` takes the run list from `pd_alpamayo_eval/registry.py`; add a row there when a
 new run lands. The first run's `real` is the reference. Further runs on the same export are tagged by
 seed (`real@seed1`); a run on ANOTHER export of the same scene (a newer render of the same clip,
 e.g. `italy_full_variations_v2`) is tagged by export name and its cards show that export's images,

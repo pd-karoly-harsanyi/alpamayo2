@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import io
+import os
 import json
 import math
 import sys
@@ -133,8 +134,20 @@ CAMERA_SETS = {
 }
 
 
+def _fetch_manifest(export_uri: str, local: Path) -> None:
+    """Download only the manifest of an s3 export; its frames are fetched on first view."""
+    from pd_alpamayo_eval.s3util import NEBIUS_BUCKET, client, parse_s3
+
+    if not export_uri.startswith("s3://"):
+        return
+    bucket, prefix = parse_s3(export_uri)
+    local.mkdir(parents=True, exist_ok=True)
+    client("nebius" if bucket == NEBIUS_BUCKET else "default").download_file(bucket, f"{prefix}/{MANIFEST_NAME}", str(local / MANIFEST_NAME))
+
+
 class Session:
-    """Everything the callbacks need, loaded once."""
+    """Everything the callbacks need, loaded once. Exports are not staged up front: the manifest is fetched,
+    frames are downloaded on first view (and kept in the cache), so a new export opens in seconds."""
 
     def __init__(self, run_uris: list[str], cache: Path, labels: list[str] | None = None, stage_exports: bool = True):
         self.cache = cache
@@ -143,6 +156,7 @@ class Session:
         self.arm_of: dict[str, str] = {}
         self.run_of: dict[str, str] = {}
         self.export_dir_of: dict[str, Path] = {}  # per column: where its images live
+        self.export_uri_of: dict[str, str] = {}  # per column: the export's s3 uri (frames are fetched on demand when missing)
         self.run_index_of: dict[str, int] = {}  # per column: 0 = reference run, 1, 2, ... = further runs (colour shade)
         self.export_of: dict[str, str] = {}  # per column: export name
         export_uri = None
@@ -159,7 +173,9 @@ class Session:
                 export_uri = run_export
             name = run_export.rstrip("/").rsplit("/", 1)[-1]
             if run_export not in export_dirs:
-                export_dirs[run_export] = _stage(run_export, cache, skip_suffixes=(), download=self._stage_exports)
+                export_dirs[run_export] = _stage(run_export, cache, skip_suffixes=(), download=False)
+                if not (export_dirs[run_export] / MANIFEST_NAME).is_file():
+                    _fetch_manifest(run_export, export_dirs[run_export])
                 if not (export_dirs[run_export] / MANIFEST_NAME).is_file():
                     raise SystemExit(f"{export_dirs[run_export]} has no {MANIFEST_NAME}")
             if labels:
@@ -191,6 +207,7 @@ class Session:
                 self.run_of[col] = summary.get("run_id", run_dir.name)
                 self.export_dir_of[col] = export_dirs[run_export]
                 self.export_of[col] = name
+                self.export_uri_of[col] = run_export
                 self.run_index_of[col] = i
         self.export_dir = export_dirs[export_uri]
         self.manifest = read_manifest(self.export_dir)
@@ -308,6 +325,23 @@ class Session:
         xyz, _ = self.trajectory.sample(future)
         return t0_rot[0].inv().apply(xyz - t0_xyz), future.size < NUM_FUTURE_STEPS
 
+    def _fetch_frame(self, col: str, rel: str, dst: Path) -> None:
+        """Download one frame of the column's export on first use (the export is not staged up front)."""
+        from pd_alpamayo_eval.s3util import NEBIUS_BUCKET, client, parse_s3
+
+        uri = self.export_uri_of.get(col)
+        if not uri or not uri.startswith("s3://"):
+            raise FileNotFoundError(dst)
+        bucket, prefix = parse_s3(uri)
+        s3 = self.__dict__.setdefault("_s3_clients", {}).get(bucket)
+        if s3 is None:
+            s3 = client("nebius" if bucket == NEBIUS_BUCKET else "default")
+            self._s3_clients[bucket] = s3
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dst.with_name(f"{dst.name}.part-{os.getpid()}")
+        s3.download_file(bucket, f"{prefix}/{rel}", str(tmp))
+        os.replace(tmp, dst)
+
     def attention_grid(self, col: str, index: int, camera: str, mode: str, band: str | None = None, weighting: str | None = None,
                        scale: str = "frame"):
         return _attention_grid_impl(self, col, index, camera, mode, band, weighting, scale)
@@ -322,6 +356,8 @@ class Session:
         src = self.export_dir_of[col] / arm / camera / f"{t_ns}.jpg"
         thumb = self.cache / "thumbs" / self.export_of[col] / arm / camera / f"{t_ns}.jpg"
         if not thumb.is_file():
+            if not src.is_file():
+                self._fetch_frame(col, f"{arm}/{camera}/{t_ns}.jpg", src)
             thumb.parent.mkdir(parents=True, exist_ok=True)
             with Image.open(src) as im:
                 im = im.convert("RGB")
