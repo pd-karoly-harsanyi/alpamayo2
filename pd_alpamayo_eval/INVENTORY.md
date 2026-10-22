@@ -65,6 +65,7 @@ the replipair with `replipair_step_alpamayo.json` (every 30 fps frame, native f-
 | Italy tram street, **v2** (improved replica, 2026-10-19) | same as Italy | `f47e7a5d-bf47-4d9f-a540-07f158d28800` | `281b3822-cb83-4235-8418-a0aa7c892345` | same |
 | Austria roundabout, **v2** (improved replica, 2026-10-19) | same as Austria | `d2fb85d9-2bd0-41bf-9db5-ec5251707da2` | `3a3586e2-5353-4287-b93e-78150b7231c5` | same |
 | Madrid intersection, **v2** (improved replica, 2026-10-19) | same as Madrid | `c6769a36-4bad-43f7-90d8-f49ed780992c` | `7d262860-b466-4e15-8f5d-d54e4d634a9d` | same |
+| Madrid intersection, **v3** (improved again, 2026-10-22; no weather variations) | same as Madrid | `b96107b7-1ddb-4925-8c09-bb3c1b6b90b2` | `3fedc926-3ff6-4406-9d7a-1fcf89e23941` | same |
 
 Artifact root: `s3://paralleldomain-pipeline/artifacts/replica_replipair_pdncc/<replipair uid>/`.
 The replipair artifacts themselves hold every frame: `<camera>/original/`, `<camera>/rendered/`,
@@ -88,6 +89,7 @@ mirrored to Nebius (`s3://pd-nebius-ray/alpamayo-eval/<export name>/`). Jobs rea
 | `italy_full_variations_v2` | `.../281b3822-.../tmp_alpamayo_eval/full/` | 174 | same four | 4957 |
 | `austria_full_variations_v2` | `.../3a3586e2-.../tmp_alpamayo_eval/full/` | 186 | same four | 5293 |
 | `madrid_full_variations_v2` | `.../7d262860-.../tmp_alpamayo_eval/full/` | 185 | same four | 5265 |
+| `madrid_full_v3` | `.../3fedc926-.../tmp_alpamayo_eval/full/` | 185 | real, rendered | ~2640 |
 | `full` (Italy, no variations; superseded) | `.../ee58e53a-.../tmp_alpamayo_eval/full/` | 174 | real, rendered | 2479 / 1.0 GB |
 | `w5s_3s` (Italy 5-8 s window; first test) | `.../ee58e53a-.../tmp_alpamayo_eval/w5s_3s/` | 30 | real, rendered | 463 / 0.2 GB |
 
