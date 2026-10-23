@@ -170,6 +170,10 @@ ADE cannot separate render from seed, the signed speed bias can), the dashboard 
 8. **Not started**: `nav_text` CFG on the 8-GPU node, companion probes, pdncc step that registers
    the export as an artifact, NVIDIA outreach status for anything customer-facing.
 
+**pdncc integration (2026-10-23): the handoff for implementing this as a pipeline step
+(`BehaviourEvalStep`) and a `ncc bundle visualize` tab is `pd_alpamayo_eval/PDNCC_INTEGRATION.md`;
+nothing has been implemented in pdncc yet.**
+
 **Step-by-step recipe for all of this: `pd_alpamayo_eval/HOWTO.md`. Before submitting anything,
 check the experiment log in `pd_alpamayo_eval/INVENTORY.md`: every (scene, replica version, arms,
 seed) combination already run is listed there with its run id.**

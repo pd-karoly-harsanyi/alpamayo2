@@ -3,7 +3,7 @@
 End-to-end recipe, PD-internal. Every step was run on 2026-10-13/14 for the three PAI-AV scenes
 (Italy tram street, Madrid intersection, Austria roundabout); the ids used appear in the examples so
 you can repeat them exactly. Background and findings: `PD_EVAL_PLAN.md`. Input format:
-`pd_alpamayo_eval/EXPORT_FORMAT.md`.
+`pd_alpamayo_eval/EXPORT_FORMAT.md`. Porting this into pdncc as a pipeline step: `PDNCC_INTEGRATION.md`.
 
 ## 0. One-time setup on your laptop
 
