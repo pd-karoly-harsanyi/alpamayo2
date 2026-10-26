@@ -8,10 +8,10 @@
 #   bash scripts/nebius_entrypoint.sh exec  cmd [args]   # arbitrary command inside the model env
 #
 # Layout on the node:
-#   $PERSIST = /mnt/pdfm-data/pdfm-data-cache/alpamayo-eval   virtiofs, survives pod recycling,
-#              but SHARED and nearly full (4 TiB, 100% used by other projects' staging on
-#              2026-10-13). Only what is expensive to refetch lives here: the 67 GB weights and
-#              the HF cache (+ token). Never stage data here.
+#   $PERSIST = /mnt/pd-general/data/alpamayo-eval   shared filesystem "pd-general" (240 GB, mounted on
+#              the H100 workers; moved here from pd-fm-training-data on 2026-10-26 at the OI team's
+#              request). Only what is expensive to refetch lives here: the 67 GB weights and the HF
+#              cache (+ token). Never stage data here; exports and results go through the bucket.
 #   $SCRATCH = /tmp/alpamayo-eval             per-pod SSD (900 GB): venv, uv/pixi caches, staged
 #              exports (20 s to re-stage 1 GB from the Nebius bucket), run outputs (uploaded to
 #              the bucket at the end). Lost when the pod is recycled, which is fine.
@@ -20,7 +20,8 @@ set -euo pipefail
 MODE="${1:-smoke}"
 shift || true
 
-PERSIST="${ALPAMAYO_EVAL_PERSIST:-/mnt/pdfm-data/pdfm-data-cache/alpamayo-eval}"
+PERSIST="${ALPAMAYO_EVAL_PERSIST:-/mnt/pd-general/data/alpamayo-eval}"
+PERSIST_MOUNT="$(dirname "$PERSIST")"
 SCRATCH="${ALPAMAYO_EVAL_SCRATCH:-/tmp/alpamayo-eval}"
 RUN_ID="${ALPAMAYO_EVAL_RUN_ID:-local-$(date -u +%Y%m%dT%H%M%SZ)}"
 MODEL_REPO="nvidia/Alpamayo2-Super"
@@ -46,14 +47,14 @@ nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv || log "nvi
 for tool in pixi uv nvcc git python3; do
   printf '  %-8s %s\n' "$tool" "$(command -v "$tool" 2>/dev/null || echo MISSING)"
 done
-if [ ! -d /mnt/pdfm-data ]; then
-  log "FATAL: /mnt/pdfm-data is not mounted on this pod"
+if [ ! -d "$PERSIST_MOUNT" ]; then
+  log "FATAL: $PERSIST_MOUNT is not mounted on this pod"
   exit 2
 fi
 echo "  uid: $(id)"
-ls -ld /mnt/pdfm-data /mnt/pdfm-data/* 2>/dev/null | sed 's/^/  /'
+ls -ld "$PERSIST_MOUNT" "$PERSIST_MOUNT"/* 2>/dev/null | sed 's/^/  /'
 mkdir -p "$PERSIST" "$SCRATCH" "$HF_HOME" "$OUT_DIR"
-df -h /tmp /mnt/pdfm-data | sed 's/^/  /'
+df -h /tmp "$PERSIST_MOUNT" | sed 's/^/  /'
 
 # HF token precedence. The pod env already carries a cluster HF_TOKEN that can read the model
 # but is NOT on the PhysicalAI-AV dataset's access list, and huggingface_hub prefers HF_TOKEN over

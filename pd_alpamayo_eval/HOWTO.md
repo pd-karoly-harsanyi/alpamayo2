@@ -33,7 +33,7 @@ you can repeat them exactly. Background and findings: `PD_EVAL_PLAN.md`. Input f
 - **pdncc checkout** at `~/workspace/pd-neural-content-creation` with its own pixi env (the exporter
   runs there because it needs the bundle/registry stack).
 - **Hugging Face**: nothing. The 67 GB weights already sit on the cluster volume
-  (`/mnt/pdfm-data/pdfm-data-cache/alpamayo-eval/models/alpamayo2-super`); the PhysicalAI-AV dataset
+  (`/mnt/pd-general/data/alpamayo-eval/models/alpamayo2-super`); the PhysicalAI-AV dataset
   is not used.
 
 ## 1. Render the replica frames the model needs (pdncc, GPU cluster)
@@ -236,7 +236,7 @@ overwrites last week's video.
 | model inputs (per scene) | `s3://paralleldomain-pipeline/artifacts/replica_replipair_pdncc/<uid>/tmp_alpamayo_eval/<name>/` (AWS) and `s3://pd-nebius-ray/alpamayo-eval/<export name>/` (Nebius) |
 | run outputs | `s3://pd-nebius-ray/alpamayo-eval/<export name>/runs/<run id>/`: `results.jsonl`, `<t0>_<arm>.json` + `.npz` (pred and GT xyz), `summary.json`, PNGs with `--save-viz`; copy back with `mirror-export` reversed |
 | laptop cache | `~/.cache/alpamayo-eval/` (safe to delete) |
-| cluster volume | `/mnt/pdfm-data/pdfm-data-cache/alpamayo-eval/` holds only the weights and the HF cache; the volume is shared and was 100 % full on 2026-10-13, so nothing else is written there |
+| cluster filesystem | `/mnt/pd-general/data/alpamayo-eval/` (shared filesystem `pd-general`, 240 GB) holds only the weights and the HF cache; nothing else is written there (moved from the pd-fm filesystem on 2026-10-26) |
 | Ray dashboard | `http://ray-nebius.internal.paralleldomain.com:8265/#/jobs/<run id>` |
 
 Runs so far (all seed 42, 1 sample, 10 diffusion steps): Italy `full_variations` run

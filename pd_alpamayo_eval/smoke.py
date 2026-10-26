@@ -6,7 +6,7 @@ is separated from the one-off weight-load cost. Writes one ``<sample>.json`` / `
 pair per instant plus ``summary.json`` into ``--out-dir`` and prints the summary to stdout,
 because the job log is the only retrieval channel until a Nebius S3 key exists.
 
-    python -m pd_alpamayo_eval.smoke --model-id /mnt/pdfm-data/alpamayo-eval/models/alpamayo2-super \
+    python -m pd_alpamayo_eval.smoke --model-id /mnt/pd-general/data/alpamayo-eval/models/alpamayo2-super \
         --out-dir /tmp/smoke --sample-indices 0 1
 """
 

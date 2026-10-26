@@ -131,9 +131,9 @@ full), `alpamayo-exec-*` (diagnostics). Ray dashboard:
 
 ## Cluster
 
-- Weights: `/mnt/pdfm-data/pdfm-data-cache/alpamayo-eval/models/alpamayo2-super/` (67 GB, shared volume).
-- HF cache + token: `/mnt/pdfm-data/pdfm-data-cache/alpamayo-eval/hf-cache/` (the pod's cluster token; model access only).
-- Outputs of the two earliest runs also under `/mnt/pdfm-data/pdfm-data-cache/alpamayo-eval/runs/` (196 MB; duplicates of the bucket copies).
+- Weights: `/mnt/pd-general/data/alpamayo-eval/models/alpamayo2-super/` (67 GB, shared filesystem `pd-general`; moved from `pd-fm-training-data` on 2026-10-26, the old copy is deleted by the OI team).
+- HF cache + token: `/mnt/pd-general/data/alpamayo-eval/hf-cache/` (the pod's cluster token; model access only).
+- Outputs of the two earliest runs also under `/mnt/pd-general/data/alpamayo-eval/runs/` (196 MB; duplicates of the bucket copies).
 - Everything else a job needs lives on the pod's local SSD and is gone when the pod is recycled (by design: the shared volume is 100 % full).
 
 ## Laptop

@@ -130,7 +130,7 @@ every rerun), so a run never needs repeating for the same (export, arms, seed).
 
 Model: `Alpamayo2Super.from_pretrained(dir, dtype=bf16, device_map="cuda:0")`, 67 GB of weights
 (gated HF repo `nvidia/Alpamayo2-Super`; a copy sits on the Nebius volume
-`/mnt/pdfm-data/pdfm-data-cache/alpamayo-eval/models/alpamayo2-super`), 69 GiB peak VRAM: needs an
+`/mnt/pd-general/data/alpamayo-eval/models/alpamayo2-super`), 69 GiB peak VRAM: needs an
 80 GB card (H100) or 96 GB (RTX PRO 6000); not a single L40S.
 
 ### 3.5 Metrics: `compare_runs.py`, `dashboard.py::Session._series`

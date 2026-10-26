@@ -110,6 +110,11 @@ synchronized). 10 Hz curated bundles match the model's 0.1 s frame spacing.
 
 ## Phase 1 results (2026-10-12, jobs `alpamayo-probe-f5d8ec4f`, `alpamayo-smoke-16f38bee`)
 
+> **Path change 2026-10-26.** Every `/mnt/pdfm-data/pdfm-data-cache/alpamayo-eval` path below is
+> historical: the weights, HF cache and token were moved to the `pd-general` shared filesystem,
+> `/mnt/pd-general/data/alpamayo-eval` (entrypoint default `PERSIST`), at the OI team's request; the
+> pd-fm filesystem is deleted after the move. Nothing else ever lived on a shared filesystem.
+
 Files: `pixi.toml` (+ lock), `scripts/submit_nebius.py`, `scripts/nebius_entrypoint.sh`,
 `pd_alpamayo_eval/smoke.py`. Submit with `pixi run -e launch submit-nebius {probe|smoke|exec} --wait`.
 Repo goes up via Ray `working_dir` (2.3 MB), no clone on the pod.
