@@ -40,6 +40,7 @@ from alpamayo2_super.models.diffusion_expert_cuda_graph import (
     enable_diffusion_expert_cuda_graph,
 )
 from alpamayo2_super.models.expert import ExpertModel
+from alpamayo2_super.models.expert_attention_recording import ExpertAttentionRecorder
 from alpamayo2_super.models.expert_utils import (
     StopAfterEOS,
     build_expert_pos_ids_and_attn_mask,
@@ -48,6 +49,7 @@ from alpamayo2_super.models.expert_utils import (
 )
 from alpamayo2_super.models.token_utils import extract_text_tokens
 from alpamayo2_super.models.utils import IGNORE_INDEX, compute_next_token_loss, fuse_traj_tokens
+from alpamayo2_super.models.vision_patch_embed import apply_patch_embed_as_linear
 
 
 @dataclass
@@ -122,6 +124,8 @@ class Alpamayo2Super(PreTrainedModel):
 
         vlm_cls = getattr(transformers, config.vlm_class)
         self.vlm = vlm_cls._from_config(config.vlm_config)
+        if getattr(config, "patch_embed_as_linear", True):
+            apply_patch_embed_as_linear(self.vlm)
         tokenizer_name_or_path = resolve_checkpoint_name_or_path(config)
         if tokenizer_name_or_path is None:
             raise ValueError("Alpamayo2Super requires vlm_name_or_path or checkpoint path.")
@@ -139,6 +143,7 @@ class Alpamayo2Super(PreTrainedModel):
             load_weights=False,
         )
         self._diffusion_expert_cuda_graph: DiffusionExpertCudaGraph | None = None
+        self._expert_attention_recorder: ExpertAttentionRecorder | None = None
         if self.config.enable_expert:
             self.expert = ExpertModel._from_config(self.config.expert_config)
             if not self.config.cotrain_expert_vlm:
@@ -282,15 +287,58 @@ class Alpamayo2Super(PreTrainedModel):
         max_generation_length: int | None = None,
         diffusion_kwargs: dict[str, Any] | None = None,
         return_extra: bool = False,
+        diffusion_seed: int | None = None,
+        record_attention: bool = False,
     ) -> (
         tuple[torch.Tensor, torch.Tensor, torch.Tensor]
-        | tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict[str, np.ndarray]]
+        | tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict[str, Any]]
     ):
-        """Generate future trajectories with CoT + expert diffusion inference."""
+        """Generate future trajectories with CoT + expert diffusion inference.
+
+        Args:
+            data: Output of :func:`alpamayo2_super.helper.prepare_model_inputs`.
+            top_p: Nucleus sampling threshold for the chain-of-causation sentence.
+            top_k: Top-k sampling threshold for the sentence, ``None`` to disable.
+            temperature: Sampling temperature for the sentence.
+            num_traj_samples: Trajectories sampled per set, each with its own sentence.
+            num_traj_sets: Trajectory sets sampled per input.
+            max_generation_length: Maximum sentence length in tokens.
+            diffusion_kwargs: Extra keyword arguments for ``expert.diffusion.sample`` (for
+                example ``{"inference_step": 10}``).
+            return_extra: Also return the decoded text fields.
+            diffusion_seed: When set, the initial noise of the flow-matching sampler is drawn
+                from a fresh generator seeded with this value, so two calls with the same seed,
+                sample count and action dims diffuse from the same noise whatever the VLM
+                generated in between. The global RNG is left untouched. ``None`` draws from the
+                global RNG as before.
+            record_attention: Capture the diffusion expert's attention over the VLM cache (see
+                :mod:`alpamayo2_super.models.expert_attention_recording`) without changing the
+                prediction and return its summary as ``extra["attention"]`` with keys
+                ``"arrays"`` and ``"layout"``. Requires ``return_extra=True`` and ``data`` to
+                carry ``camera_indices`` and ``num_frames`` (``prepare_model_inputs`` adds them).
+
+        Returns:
+            ``(pred_xyz, pred_rot, logprob)`` and, with ``return_extra``, the ``extra`` dict.
+        """
         if not self.config.enable_expert:
             raise ValueError(
                 "Alpamayo2Super public inference requires an expert-enabled checkpoint."
             )
+        if record_attention and not return_extra:
+            raise ValueError("record_attention=True requires return_extra=True")
+        if record_attention and self._diffusion_expert_cuda_graph is not None:
+            raise ValueError(
+                "record_attention is not supported while the diffusion expert CUDA graph is "
+                "enabled (the attention runs inside captured graphs)"
+            )
+        if record_attention:
+            if "camera_indices" not in data or "num_frames" not in data:
+                raise ValueError(
+                    "record_attention needs data['camera_indices'] and data['num_frames']; "
+                    "build data with alpamayo2_super.helper.prepare_model_inputs"
+                )
+            if self._expert_attention_recorder is None:
+                self._expert_attention_recorder = ExpertAttentionRecorder(self)
 
         tokenized_data = dict(data["tokenized_data"])
         traj_data = {
@@ -396,13 +444,22 @@ class Alpamayo2Super(PreTrainedModel):
             pred = self.expert.action_out_proj(expert_outputs.last_hidden_state)
             return pred.view(-1, *self.expert.action_space.get_action_space_dims())
 
-        diffusion_kwargs = diffusion_kwargs or {}
+        diffusion_kwargs = dict(diffusion_kwargs or {})
+        if diffusion_seed is not None:
+            if "generator" in diffusion_kwargs:
+                raise ValueError("pass either diffusion_seed or diffusion_kwargs['generator']")
+            diffusion_kwargs["generator"] = torch.Generator(device=device).manual_seed(
+                int(diffusion_seed)
+            )
         graph_context = (
             self._diffusion_expert_cuda_graph.sampling()
             if self._diffusion_expert_cuda_graph is not None
             else nullcontext()
         )
-        with graph_context:
+        recording_context = (
+            self._expert_attention_recorder.recording() if record_attention else nullcontext()
+        )
+        with graph_context, recording_context:
             sampled_action = self.expert.diffusion.sample(
                 batch_size=b_star,
                 step_fn=step_fn,
@@ -449,6 +506,13 @@ class Alpamayo2Super(PreTrainedModel):
             extra[key] = np.array(extra[key]).reshape(
                 [input_ids.shape[0], num_traj_sets, num_traj_samples]
             )
+        if record_attention:
+            arrays, layout = self._expert_attention_recorder.summarize(
+                tokenized_data=data["tokenized_data"],
+                camera_indices=data["camera_indices"],
+                num_frames=int(data["num_frames"]),
+            )
+            extra["attention"] = {"arrays": arrays, "layout": layout}
         return pred_xyz, pred_rot, logprob, extra
 
 

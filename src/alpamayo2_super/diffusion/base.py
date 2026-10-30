@@ -48,7 +48,11 @@ class BaseDiffusion(ABC, nn.Module):
         return_all_steps: bool = False,
         *args,
         unguided_step_fn: StepFn | None = None,
+        generator: torch.Generator | None = None,
         **kwargs,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-        """Sample a batch of actions from the diffusion model."""
+        """Sample a batch of actions from the diffusion model.
+
+        ``generator`` draws the initial noise; ``None`` uses the global RNG of ``device``.
+        """
         raise NotImplementedError

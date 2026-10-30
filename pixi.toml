@@ -61,7 +61,7 @@ submit-nebius = "python scripts/submit_nebius.py"
 mirror-export = "python pd_alpamayo_eval/mirror_export.py"
 
 [tasks.test-pd]
-cmd = "pytest -q tests/test_pd_load_export.py tests/test_pd_cot_differs.py tests/test_pd_attention.py tests/test_pd_ablation.py"
+cmd = "pytest -q tests/test_pd_load_export.py tests/test_pd_cot_differs.py tests/test_pd_attention.py tests/test_pd_ablation.py tests/test_diffusion_seed.py tests/test_vision_patch_embed.py tests/test_expert_attention_recording.py tests/test_inference_sample.py tests/test_sample_trajectories_plumbing.py"
 env = { PYTHONPATH = "src:." }
 
 # Side-by-side video of a run: `pixi run -e dev make-video s3://pd-nebius-ray/alpamayo-eval/<name>/runs/<id>`
