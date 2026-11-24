@@ -64,9 +64,15 @@ class FlowMatching(BaseDiffusion):
         use_classifier_free_guidance: bool | None = None,
         inference_guidance_weight: float | None = None,
         temperature: float = 1.0,
+        generator: torch.Generator | None = None,
         **kwargs,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
-        """Sample actions by integrating the learned vector field."""
+        """Sample actions by integrating the learned vector field.
+
+        ``generator`` draws the initial noise so that callers can make it independent of whatever
+        consumed the global RNG before (e.g. sampling the chain-of-causation sentence). ``None``
+        draws from the global RNG of ``device`` as before.
+        """
         del args, kwargs
         int_method = int_method or self.int_method
         inference_step = inference_step or self.num_inference_steps
@@ -88,6 +94,7 @@ class FlowMatching(BaseDiffusion):
             inference_guidance_weight=inference_guidance_weight,
             use_classifier_free_guidance=use_classifier_free_guidance,
             temperature=temperature,
+            generator=generator,
         )
 
     @staticmethod
@@ -114,13 +121,14 @@ class FlowMatching(BaseDiffusion):
         inference_guidance_weight: float = 1.0,
         use_classifier_free_guidance: bool = False,
         temperature: float = 1.0,
+        generator: torch.Generator | None = None,
     ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
         """Integrate the flow field with fixed-step Euler updates."""
         if inference_step is None:
             inference_step = self.num_inference_steps
         if use_classifier_free_guidance and unguided_step_fn is None:
             raise ValueError("unguided_step_fn is required when using classifier free guidance")
-        x = torch.randn(batch_size, *self.x_dims, device=device) * temperature
+        x = torch.randn(batch_size, *self.x_dims, device=device, generator=generator) * temperature
         time_steps = torch.linspace(0.0, 1.0, inference_step + 1, device=device)
         n_dim = len(self.x_dims)
         if return_all_steps:

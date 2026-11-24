@@ -76,6 +76,7 @@ class Alpamayo2SuperConfig(PretrainedConfig):
         expert_config: dict[str, Any] | ExpertModelConfig | None = None,
         enable_expert: bool | None = None,
         cotrain_expert_vlm: bool = False,
+        patch_embed_as_linear: bool = True,
         **kwargs: Any,
     ) -> None:
         legacy_use_dt = kwargs.pop("use_dt_tokens", None)
@@ -132,6 +133,9 @@ class Alpamayo2SuperConfig(PretrainedConfig):
         self.tokens_per_future_traj = tokens_per_future_traj
         self.loss_weights = loss_weights or {"future_traj": 1.0, "others": 1.0}
         self.cotrain_expert_vlm = cotrain_expert_vlm
+        # Run the vision patch embedding as a GEMM (identical maths, no cuDNN conv3d); see
+        # alpamayo2_super.models.vision_patch_embed. Absent from released config.json files.
+        self.patch_embed_as_linear = bool(patch_embed_as_linear)
 
         if not hasattr(self, "vlm_config") and vlm_name_or_path is None:
             return

@@ -99,6 +99,10 @@ def prepare_model_inputs(
         "tokenized_data": tokenized_data,
         "ego_history_xyz": data["ego_history_xyz"],
         "ego_history_rot": data["ego_history_rot"],
+        # Image order in the prompt (camera-major, ``image_frames.flatten(0, 1)`` above); read by
+        # ``sample_trajectories_from_data(record_attention=True)`` to map attention onto images.
+        "camera_indices": data["camera_indices"],
+        "num_frames": int(data["image_frames"].shape[1]),
     }
 
 

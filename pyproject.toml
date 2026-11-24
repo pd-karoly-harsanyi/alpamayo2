@@ -1,7 +1,7 @@
 [project]
 name = "alpamayo2_super"
 version = "0.1.0"
-requires-python = "==3.12.*"
+requires-python = ">=3.11"
 dependencies = [
   "accelerate>=1.12.0",
   "av>=16.0.1",
@@ -15,10 +15,10 @@ dependencies = [
   "physical-ai-av>=0.2.0",
   "pillow>=12.0.0",
   "scipy>=1.16.0",
-  "torch==2.8.0",
+  "torch>=2.8.0",
   "torchvision>=0.23.0",
   "transformers==4.57.1",
-  "flash-attn>=2.8.3",
+  "flash-attn>=2.8.1",
 ]
 
 [build-system]

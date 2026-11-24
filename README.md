@@ -349,6 +349,8 @@ alpamayo-2-super/
 |       |-- config.py
 |       |-- helper.py
 |       |-- input_profiles.py
+|       |-- inference.py
+|       |-- inference_sample.py
 |       |-- inference_smoke.py
 |       |-- load_physical_aiavdataset.py
 |       |-- text_tasks.py

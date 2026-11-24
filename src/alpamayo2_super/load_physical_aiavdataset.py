@@ -25,6 +25,7 @@ import torch
 from einops import rearrange
 
 from alpamayo2_super.common.constants import CAMERA_NAMES_TO_INDICES
+from alpamayo2_super.inference_sample import inference_sample_from_arrays
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +64,8 @@ def load_physical_aiavdataset(
             visualization overlays. Missing calibration falls back to BEV-only visualization.
 
     Returns:
-        A dictionary with the following keys:
+        A dictionary assembled by
+        :func:`alpamayo2_super.inference_sample.inference_sample_from_arrays` with the keys:
             - image_frames: torch.Tensor of shape (N_cameras, num_frames, 3, H, W)
             - camera_indices: torch.Tensor of shape (N_cameras,)
             - ego_history_xyz: torch.Tensor of shape (1, 1, num_history_steps, 3)
@@ -158,16 +160,6 @@ def load_physical_aiavdataset(
     ego_history_rot_local = (t0_rot_inv * spt.Rotation.from_quat(ego_history_quat)).as_matrix()
     ego_future_rot_local = (t0_rot_inv * spt.Rotation.from_quat(ego_future_quat)).as_matrix()
 
-    # Convert to torch tensors with batch dimensions: (B=1, n_traj_group=1, T, ...)
-    ego_history_xyz_tensor = (
-        torch.from_numpy(ego_history_xyz_local).float().unsqueeze(0).unsqueeze(0)
-    )
-    ego_history_rot_tensor = (
-        torch.from_numpy(ego_history_rot_local).float().unsqueeze(0).unsqueeze(0)
-    )
-    ego_future_xyz_tensor = torch.from_numpy(ego_future_xyz_local).float().unsqueeze(0).unsqueeze(0)
-    ego_future_rot_tensor = torch.from_numpy(ego_future_rot_local).float().unsqueeze(0).unsqueeze(0)
-
     # Load camera images
     image_frames_list = []
     camera_indices_list = []
@@ -200,64 +192,24 @@ def load_physical_aiavdataset(
         camera_indices_list.append(cam_idx)
         timestamps_list.append(torch.from_numpy(frame_timestamps.astype(np.int64)))
 
-    # Stack and sort by camera index for consistent ordering
-    image_frames = torch.stack(image_frames_list, dim=0)  # (N_cameras, num_frames, 3, H, W)
-    camera_indices = torch.tensor(camera_indices_list, dtype=torch.int64)  # (N_cameras,)
-    all_timestamps = torch.stack(timestamps_list, dim=0)  # (N_cameras, num_frames)
-
-    # Sort by camera index to ensure consistent ordering [0, 1, 2, 6] instead of arbitrary order
-    sort_order = torch.argsort(camera_indices)
-    image_frames = image_frames[sort_order]
-    camera_indices = camera_indices[sort_order]
-    all_timestamps = all_timestamps[sort_order]
-
-    # PhysicalAI-AV exposes image timestamps in the clip-relative time base.
-    absolute_timestamps = all_timestamps
-    camera_tmin_tensor = absolute_timestamps.min()
-    camera_tmin = int(camera_tmin_tensor.item())
-    relative_timestamps = (
-        absolute_timestamps - camera_tmin_tensor
-    ).float() * 1e-6  # (N_cameras, num_frames)
-    ego_t0_us = int(t0_us)
-
-    ego_history_tvals = torch.arange(
-        -num_history_steps + 1,
-        1,
-        dtype=torch.float32,
-    ) * float(time_step)
-    ego_future_tvals = torch.arange(
-        1,
-        num_future_steps + 1,
-        dtype=torch.float32,
-    ) * float(time_step)
-    t0_inv_quat_wxyz = np.array(
-        [t0_quat[3], -t0_quat[0], -t0_quat[1], -t0_quat[2]],
-        dtype=np.float32,
+    # Stack per camera; inference_sample_from_arrays sorts by camera index and assembles the
+    # input contract (timestamps, tvals, inverse t0 quaternion, batch dims).
+    data = inference_sample_from_arrays(
+        image_frames=torch.stack(image_frames_list, dim=0),  # (N_cameras, num_frames, 3, H, W)
+        camera_indices=torch.tensor(camera_indices_list, dtype=torch.int64),  # (N_cameras,)
+        # PhysicalAI-AV exposes image timestamps in the clip-relative time base.
+        image_timestamps_us=torch.stack(timestamps_list, dim=0),  # (N_cameras, num_frames)
+        t0_us=t0_us,
+        t0_xyz=t0_xyz,
+        t0_quat_xyzw=t0_quat,
+        ego_history_xyz_local=ego_history_xyz_local,
+        ego_history_rot_local=ego_history_rot_local,
+        ego_future_xyz_local=ego_future_xyz_local,
+        ego_future_rot_local=ego_future_rot_local,
+        time_step=time_step,
+        clip_id=clip_id,
     )
-
-    data = {
-        "image_frames": image_frames,  # (N_cameras, num_frames, 3, H, W)
-        "camera_indices": camera_indices,  # (N_cameras,)
-        "camera_names": [camera_index_to_name[camera_id] for camera_id in camera_indices.tolist()],
-        "ego_available": torch.tensor(True),
-        "ego_t0": torch.tensor([ego_t0_us], dtype=torch.int64),
-        "ego_t0_relative": torch.tensor([(ego_t0_us - camera_tmin) * 1e-6], dtype=torch.float32),
-        "ego_t0_frame_idx": torch.tensor([num_frames - 1], dtype=torch.int64),
-        "prediction_start_offset": torch.zeros(1, dtype=torch.float32),
-        "ego_history_tvals": ego_history_tvals,
-        "ego_history_xyz": ego_history_xyz_tensor,  # (1, 1, num_history_steps, 3)
-        "ego_history_rot": ego_history_rot_tensor,  # (1, 1, num_history_steps, 3, 3)
-        "ego_future_tvals": ego_future_tvals,
-        "ego_future_xyz": ego_future_xyz_tensor,  # (1, 1, num_future_steps, 3)
-        "ego_future_rot": ego_future_rot_tensor,  # (1, 1, num_future_steps, 3, 3)
-        "relative_timestamps": relative_timestamps,  # (N_cameras, num_frames)
-        "absolute_timestamps": absolute_timestamps,  # (N_cameras, num_frames)
-        "camera_tmin": camera_tmin,
-        "ego_t0_xyz": torch.from_numpy(t0_xyz).float().view(1, 1, 3),
-        "ego_t0_inv_quat": torch.from_numpy(t0_inv_quat_wxyz).float().view(1, 1, 4),
-        "t0_us": t0_us,
-        "clip_id": clip_id,
-    }
+    camera_indices = data["camera_indices"]
     if include_calibration:
         calibration = _load_camera_calibrations(
             avdi=avdi,
